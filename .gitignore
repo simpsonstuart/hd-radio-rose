@@ -1,0 +1,9 @@
+upstream/
+.research/
+__pycache__/
+*.pyc
+.env
+dist/
+sources/
+web/node_modules/
+web/dist/

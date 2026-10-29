@@ -1,0 +1,19 @@
+# Optional Linux Docker host test. RouterOS uses its own container settings.
+services:
+  radio:
+    build: .
+    platform: linux/arm64
+    image: hd-radio-rose:local
+    ports:
+      - "8080:8080"
+    environment:
+      WEB_USER: radio
+      WEB_PASSWORD: ${WEB_PASSWORD:?Set WEB_PASSWORD in .env}
+    volumes:
+      - radio-data:/data
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - "c 189:* rmw"
+    restart: unless-stopped
+volumes:
+  radio-data:
