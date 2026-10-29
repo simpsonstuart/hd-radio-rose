@@ -54,7 +54,7 @@ impl Nrsc5App {
             },
             "shutdown" => {
                 self.stop_recording(false);
-                eframe::App::on_exit(self);
+                eframe::App::on_exit(self, None);
                 json!({"ok": true})
             },
             "command" => {

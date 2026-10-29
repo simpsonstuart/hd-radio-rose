@@ -22,6 +22,10 @@ def patch(root, adapter=None):
     app = replace_once(app, "pub fn new(cc: &eframe::CreationContext<'_>) -> Self {",
                        "pub fn new(ctx: &egui::Context) -> Self {")
     app = app.replace("&cc.egui_ctx", "ctx")
+    # Docker enables eframe/glow, which changes the App shutdown signature.
+    # The headless runner has no GL context; retain upstream cleanup unchanged.
+    app = replace_once(app, "fn on_exit(&mut self) {",
+                       "fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {")
     begin = app.index("        let dock_state = cc")
     end = app.index("\n\n        let (nrsc5,", begin)
     app = app[:begin] + "        let dock_state = default_dock_state();" + app[end:]
