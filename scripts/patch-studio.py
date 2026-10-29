@@ -71,6 +71,25 @@ def patch(root, adapter=None):
     block = replace_once(lock[begin:end], ' "serde",', ' "serde",\n "serde_json",')
     lock_path.write_text(lock[:begin] + block + lock[end:])
     (root / "src/main.rs").write_text((adapter / "main.rs").read_text(), encoding="utf-8")
+    soapy_path = root / "src/sdr/soapy.rs"
+    soapy = soapy_path.read_text(encoding="utf-8")
+    begin = soapy.index("        // Sample rate first")
+    end = soapy.index("        self.device\n            .set_sample_rate", begin)
+    soapy = soapy[:begin] + '''        // Capture at a hardware-safe rate, then resample before DSP.
+        let (device_rate, resample) = capture_rate_plan(&self.driver, cfg.sample_rate_sps as f64);
+        eprintln!("[sdr] driver={} capture={} sps decoder={} sps resample={}",
+            self.driver, device_rate, cfg.sample_rate_sps, resample.is_some());
+''' + soapy[end:]
+    anchor = "        // Stash the resample plan so `run_stream` can pick it up."
+    soapy = replace_once(soapy, anchor, '''        if self.driver == "hackrf" {
+            self.device.set_bandwidth(RX, CH, 1_750_000.0)
+                .map_err(|e| SdrError::SoapyCall {
+                    func: "set_bandwidth", detail: format!("HackRF 1.75 MHz: {e}"),
+                })?;
+        }
+''' + anchor)
+    soapy += "\n" + (adapter / "soapy_rates.rs").read_text(encoding="utf-8")
+    soapy_path.write_text(soapy, encoding="utf-8")
 
 
 if __name__ == "__main__":

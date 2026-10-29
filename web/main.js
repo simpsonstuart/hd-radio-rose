@@ -1,5 +1,5 @@
 import { createApp, ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
-import { tabs, media, recordingUrl, db, groupPlays, layoutRead } from './model.js';
+import { tabs, media, recordingUrl, db, groupPlays, layoutRead, formatFrequency, fmChannel, digitalLocked, hdAvailable, receiverStatus } from './model.js';
 import { drawSpectrum, drawWaterfall, drawConstellation } from './charts.js';
 import './style.css';
 
@@ -32,7 +32,7 @@ createApp({
     function accept(s) {
       const old = state.value;
       state.value = s;
-      if (!old || old.frequency !== s.frequency) frequency.value = s.frequency;
+      if (!old || old.frequency !== s.frequency) frequency.value = formatFrequency(s.frequency);
       if (!old || old.config.sdr.transport !== s.config.sdr.transport) {
         remoteHost.value = s.config.sdr.remote_host || '';
         remotePort.value = s.config.sdr.remote_port || (s.config.sdr.transport === 'rtl_tcp_remote' ? 1234 : 55132);
@@ -52,7 +52,10 @@ createApp({
       catch (e) { error.value = e.message; }
       finally { pending.value = false; }
     }
-    async function tune() { await command('TuneMhz', Number(frequency.value)); }
+    async function tune() {
+      try { const value = fmChannel(frequency.value); frequency.value = formatFrequency(value); await command('TuneMhz', value); }
+      catch (e) { error.value = e.message; }
+    }
     function step(amount) { frequency.value = Math.max(87.9, Math.min(107.9, Math.round((Number(frequency.value) + amount) * 10) / 10)); tune(); }
     async function details() {
       try {
@@ -86,7 +89,7 @@ createApp({
     function destructive(type) { if (confirm('Clear this stored data? This cannot be undone.')) command(type); }
     function presetEdit(index) {
       const old = config.value.presets[index];
-      editPreset.value = { index, name: old?.name || '', frequency_mhz: old?.frequency_mhz || state.value.frequency, program: old?.program || 0 };
+      editPreset.value = { index, name: old?.name || '', frequency_mhz: formatFrequency(old?.frequency_mhz || state.value.frequency), program: old?.program || 0 };
     }
     async function presetSave() {
       const p = editPreset.value;
@@ -121,7 +124,7 @@ createApp({
       player, spectrum, waterfall, constellation, current, station, config, logRows, logView, query, files,
       weatherIndex, weatherPlaying, weather, editPreset, deviceIndex, remoteHost, remotePort, remoteExtra,
       command, tune, step, toggleAudio, audioFailed, destructive, presetEdit, presetSave, selectDevice, applyRemote,
-      format, time, media, recordingUrl, db, dropTab, dragStart: t => { dragTab = t; }, tabs,
+      format, time, media, recordingUrl, db, digitalLocked, hdAvailable, receiverStatus, dropTab, dragStart: t => { dragTab = t; }, tabs,
       resetLayout: () => { order.value = [...tabs]; localStorage.removeItem('rose-layout'); } };
   },
   template: `
@@ -134,22 +137,22 @@ createApp({
       <button class="theme" @click="theme=theme==='dark'?'light':'dark'">{{theme==='dark'?'☀ Light appearance':'☾ Dark appearance'}}</button>
     </aside>
     <main>
-      <header class="page-header"><div><span class="eyebrow">YOUR SIGNAL. YOUR SPACE.</span><h1>{{active}}</h1></div><div class="header-status"><span :class="['dot',{online:state?.synced}]"></span>{{state?.synced?'HD signal locked':state?.streaming?'Acquiring signal':'Receiver idle'}}</div></header>
+      <header class="page-header"><div><span class="eyebrow">YOUR SIGNAL. YOUR SPACE.</span><h1>{{active}}</h1></div><div class="header-status"><span :class="['dot',{online:digitalLocked(state)}]"></span>{{digitalLocked(state)?'HD signal locked':state?.streaming?'Acquiring signal':'Receiver idle'}}</div></header>
       <div v-if="error" class="notice error" role="alert">{{error}}<button @click="error=''" aria-label="Dismiss error">×</button></div>
       <div v-if="!connected" class="notice">The receiver is unavailable. Controls will reconnect automatically.</div>
       <template v-if="state">
       <div v-if="state.preview" class="notice">UI preview data — no SDR or headless engine is running in this preview.</div>
       <div v-if="station.alert" class="notice alert" role="alert"><b>Broadcast emergency alert</b> {{station.alert}}</div>
       <section class="tuner panel" aria-label="Tuner">
-        <form @submit.prevent="tune" class="frequency"><button type="button" @click="step(-.2)" :disabled="pending||!connected" aria-label="Tune down">−</button><label><input v-model="frequency" type="number" min="87.9" max="107.9" step=".2" aria-label="Frequency MHz"><span>MHz / FM</span></label><button type="button" @click="step(.2)" :disabled="pending||!connected" aria-label="Tune up">+</button><button type="submit" :disabled="pending||!connected">Tune</button></form>
-        <div class="hd-channels" aria-label="HD subchannels"><button v-for="n in (config.show_hd5_hd8?8:4)" :key="n" :class="{selected:state.selected===n-1,advertised:station.programs?.[n-1]}" :title="station.programs?.[n-1]?.short_name || 'Not advertised yet; click to probe'" @click="command('SelectProgram',n-1)" :disabled="pending||!connected">HD{{n}}<span v-if="state.programs[n-1]?.decoded" class="tiny-dot"></span></button></div>
+        <form @submit.prevent="tune" class="frequency"><button type="button" @click="step(-.2)" :disabled="pending||!connected" aria-label="Tune down">−</button><label><input v-model="frequency" type="number" required min="87.9" max="107.9" step=".2" aria-label="Frequency MHz"><span>MHz / FM</span></label><button type="button" @click="step(.2)" :disabled="pending||!connected" aria-label="Tune up">+</button><button type="submit" :disabled="pending||!connected">Tune</button></form>
+        <div class="hd-channels" aria-label="HD subchannels"><span :class="['hd-indicator',{lit:connected&&digitalLocked(state)}]" role="status" :aria-label="connected&&digitalLocked(state)?'HD Radio digital signal locked':'HD Radio digital signal unavailable'">HD<span>RADIO</span></span><button v-for="n in (config.show_hd5_hd8?8:4)" :key="n" :class="{selected:connected&&hdAvailable(state,n-1)&&state.selected===n-1}" :title="hdAvailable(state,n-1)?(station.programs[n-1].short_name || 'Digital channel available'):'No digital service available'" @click="command('SelectProgram',n-1)" :disabled="pending||!connected||!hdAvailable(state,n-1)">HD{{n}}</button></div>
         <button :class="['primary',{running:state.streaming}]" @click="command(state.streaming?'Stop':'Start')" :disabled="pending||!connected||state.retuning">{{state.retuning?'Retuning…':state.streaming?'■ Stop receiver':'▶ Start receiver'}}</button>
       </section>
-      <p class="receiver-status" role="status">{{state.status}}</p>
+      <p class="receiver-status" role="status">{{receiverStatus(state)}}</p>
 
       <template v-if="active==='Listen'">
         <div class="listen-grid">
-          <section class="panel now-playing"><div class="panel-title"><span>ON AIR</span><span>{{state.speaker===null?'Selected':'Listening'}} · HD{{(state.speaker ?? state.selected)+1}}</span></div>
+          <section class="panel now-playing"><div class="panel-title"><span>ON AIR</span><span>{{digitalLocked(state)?'HD'+((state.speaker ?? state.selected)+1):state.streaming?(config.analog_fallback_mode==='digital_only'?'Waiting for HD':'FM / Analog'):'Receiver idle'}}</span></div>
             <div class="track"><div class="cover"><img v-if="current.cover||current.logo" :src="media(current.cover||current.logo)" alt="Broadcast artwork"><span v-else>♫</span></div><div class="track-copy"><p class="eyebrow">{{station.call_sign||station.rds_program_service||'Waiting for station identification'}}</p><h2>{{current.title||station.rds_radiotext||'Find your next signal.'}}</h2><p>{{current.artist||'Tune a local HD Radio station to begin.'}}</p><small>{{[current.album,current.genre].filter(Boolean).join(' · ')}}</small><p v-if="state.stale||(!current.fresh&&current.title)" class="muted">Metadata may be stale.</p></div></div>
             <div class="station-message">{{station.slogan||station.message||'Station metadata appears as it arrives over the air.'}}</div>
             <div class="player-bar"><button class="primary" @click="toggleAudio">{{audioOn?'Ⅱ Pause audio':'▶ Listen'}}</button><label>Volume <input v-model="volume" type="range" min="0" max="1" step=".01" aria-label="Browser volume"></label><small>{{audioStatus}}</small><button :class="{recording:state.recording}" @click="command(state.recording?'StopRecording':'StartRecording')" :disabled="pending||!state.streaming">{{state.recording?'■ Stop recording':'● Record'}}</button></div>

@@ -5,6 +5,7 @@ import mimetypes
 from pathlib import Path
 import socket
 import threading
+import time
 from urllib.parse import parse_qs, urlsplit
 
 DATA = Path("/data")
@@ -12,13 +13,21 @@ RPC_LOCK = threading.Lock()
 
 
 def rpc(request, timeout=35):
-    with RPC_LOCK, socket.create_connection(("127.0.0.1", 8091), timeout=timeout) as client:
-        client.settimeout(timeout)
-        client.sendall(json.dumps(request, allow_nan=False).encode() + b"\n")
-        response = client.makefile("rb").readline(8 * 1024 * 1024)
-        if not response.endswith(b"\n"):
-            raise RuntimeError("Invalid receiver response")
-        return json.loads(response)
+    # Polling must not accumulate behind a stalled USB/receiver operation.
+    deadline = time.monotonic() + timeout
+    if not RPC_LOCK.acquire(timeout=min(timeout, 1)):
+        raise RuntimeError("Receiver busy with another request; retry shortly")
+    try:
+        with socket.create_connection(("127.0.0.1", 8091), timeout=max(.001, deadline - time.monotonic())) as client:
+            client.settimeout(max(.001, deadline - time.monotonic()))
+            client.sendall(json.dumps(request, allow_nan=False).encode() + b"\n")
+            with client.makefile("rb") as stream:
+                response = stream.readline(8 * 1024 * 1024)
+            if not response.endswith(b"\n"):
+                raise RuntimeError("Invalid receiver response")
+            return json.loads(response)
+    finally:
+        RPC_LOCK.release()
 
 
 def number(value, low, high, integer=False):
@@ -33,6 +42,14 @@ def string(value, limit=512):
     if not isinstance(value, str) or len(value) > limit or any(ord(c) < 32 for c in value):
         raise ValueError("Invalid text value")
     return value
+
+
+def fm_channel(value):
+    value = number(value, 87.9, 107.9)
+    tenths = round(value * 10)
+    if abs(value * 10 - tenths) > .0001 or tenths % 2 != 1:
+        raise ValueError("Use FM channels from 87.9 to 107.9 MHz in 0.2 MHz steps")
+    return tenths / 10
 
 
 UNITS = {"Start", "Stop", "RefreshSdrDevices", "ResetSdrConfig", "ClearGainCache",
@@ -67,6 +84,8 @@ def validate_command(command):
             raise ValueError("Expected a boolean")
     elif kind in NUMBERS:
         value = number(value, *NUMBERS[kind])
+        if kind == "TuneMhz":
+            value = fm_channel(value)
     elif kind in ENUMS:
         if not isinstance(value, str) or value not in ENUMS[kind]:
             raise ValueError("Unknown setting")
@@ -99,7 +118,7 @@ def validate_command(command):
         if set(preset) != {"name", "frequency_mhz", "program"}:
             raise ValueError("Invalid preset fields")
         value = [number(slot, 0, 47, True), {"name": string(preset["name"], 128),
-                 "frequency_mhz": number(preset["frequency_mhz"], 87.9, 107.9),
+                 "frequency_mhz": fm_channel(preset["frequency_mhz"]),
                  "program": number(preset["program"], 0, 7, True)}]
     else:
         raise ValueError("Unknown or unsupported command")
@@ -118,12 +137,16 @@ def make_handler(base):
     class Handler(base):
         def json_response(self, data, status=200):
             body = json.dumps(data, allow_nan=False).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                # Client abandoned the request. Never send a second response.
+                self.close_connection = True
 
         def file_response(self, path, download=False):
             self.send_response(200)
@@ -167,6 +190,8 @@ def make_handler(base):
                 if route == "/api/recording":
                     return self.file_response(confined_file(DATA / "recordings", query.get("name", [""])[0], {".opus"}), True)
                 self.send_error(404)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
             except (ValueError, FileNotFoundError):
                 self.json_response({"error": "Media not found or path not allowed"}, 404)
             except (OSError, RuntimeError) as error:

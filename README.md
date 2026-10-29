@@ -13,6 +13,17 @@ This should remove desktop-rendering and screen-streaming overhead. It does not
 reduce the underlying SDR/DSP work; actual CPU, RAM and latency improvements must
 be measured on the ROSE. MP3 playback still has browser-dependent buffering.
 
+HackRF capture uses **8 MS/s** with a 1.75 MHz baseband filter, then software
+resampling to the decoder's exact **1.488375 MS/s**. RTL-SDR still captures at the
+decoder rate directly. The HackRF path therefore requires more USB bandwidth and
+CPU. This follows the [HackRF sampling guidance](https://hackrf.readthedocs.io/en/stable/sampling_rate.html);
+requesting the decoder rate directly from HackRF is below its supported range.
+The startup log reports the capture and decoder rates. If HackRF opens but
+`rx_stream.read` times out, first confirm the rebuilt image reports
+`driver=hackrf capture=8000000`; then check USB cable, power, passthrough and
+whether another service owns the radio. Device discovery alone does not confirm
+working sample transfers. Hardware validation of this resampling path is pending.
+
 ## Feature coverage
 
 The adapter preserves Studio's existing command handlers and event processing,

@@ -53,7 +53,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let mut last_save = Instant::now();
     let mut last_heartbeat = Instant::now() - Duration::from_secs(2);
+    // Keep diagnostic reporting independent of the thread calling USB drivers.
+    // Do not pretend the receiver is healthy by updating its heartbeat here.
+    let progress = std::sync::Arc::new(std::sync::Mutex::new((Instant::now(), String::from("startup"))));
+    let observed = progress.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(10));
+        let (since, stage) = observed.lock().unwrap().clone();
+        if since.elapsed() >= Duration::from_secs(10) {
+            eprintln!("[receiver] stalled for {:.0}s in {stage}", since.elapsed().as_secs_f32());
+        }
+    });
     loop {
+        *progress.lock().unwrap() = (Instant::now(), "event loop / runtime metrics".into());
         app.web_tick(&ctx);
         if last_heartbeat.elapsed() >= Duration::from_secs(1) {
             std::fs::write("/run/rose/heartbeat", b"alive")?;
@@ -61,11 +73,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Ok((request, reply)) = rx.recv_timeout(Duration::from_millis(50)) {
             let shutdown = request["op"] == "shutdown";
+            let stage = format!("op={} command={}", request["op"], request["command"]["type"]);
+            *progress.lock().unwrap() = (Instant::now(), stage.clone());
+            let command = request["op"] == "command";
+            if command { eprintln!("[receiver] begin {stage}"); }
             let response = app.web_request(request);
+            if command { eprintln!("[receiver] end {stage}: status={} error={}", response["status"], response["error"]); }
             let _ = reply.send(response);
             if shutdown { break; }
         }
         if last_save.elapsed() >= Duration::from_secs(30) {
+            *progress.lock().unwrap() = (Instant::now(), "save receiver state".into());
             app.web_save();
             last_save = Instant::now();
         }

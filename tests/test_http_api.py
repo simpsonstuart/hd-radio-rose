@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('http_gateway', ROOT / 'container/gateway.py')
@@ -67,6 +67,46 @@ class HttpTests(unittest.TestCase):
     def test_oversized_body_rejected(self):
         status, _ = self.request('POST', '/api/command', ' ' * 8193, {'Content-Type':'application/json'})
         self.assertEqual(status, 413)
+
+    def test_tuning_rejects_off_channel_frequencies(self):
+        with patch.object(gateway, 'rpc', return_value={'ready': True}) as call:
+            for value in (99, 99.2, 99.15, 87.7, 108.1):
+                status, _ = self.request('POST', '/api/command', json.dumps({'type':'TuneMhz','value':value}), {'Content-Type':'application/json'})
+                self.assertEqual(status, 400)
+            call.assert_not_called()
+            for value in (87.9, 99.1, 107.9):
+                status, _ = self.request('POST', '/api/command', json.dumps({'type':'TuneMhz','value':value}), {'Content-Type':'application/json'})
+                self.assertEqual(status, 200)
+            with self.assertRaises(ValueError):
+                gateway.validate_command({'type':'SetPreset','value':[0,{'name':'Invalid','frequency_mhz':99.2,'program':0}]})
+
+    def test_disconnected_json_client_does_not_get_second_response(self):
+        handler = object.__new__(gateway.make_handler(Base))
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = Mock()
+        for failure_point in (handler.end_headers, handler.wfile.write):
+            for error in (BrokenPipeError, ConnectionResetError):
+                handler.send_response.reset_mock()
+                failure_point.side_effect = error('client disconnected')
+                handler.json_response({'ready': True})
+                handler.send_response.assert_called_once_with(200)
+                self.assertTrue(handler.close_connection)
+            failure_point.side_effect = None
+
+    def test_busy_receiver_wait_is_bounded_without_opening_socket(self):
+        with gateway.RPC_LOCK, patch.object(gateway.socket, 'create_connection') as connect:
+            with self.assertRaisesRegex(RuntimeError, 'Receiver busy'):
+                gateway.rpc({'op': 'state'}, timeout=.01)
+            connect.assert_not_called()
+
+    def test_receiver_connection_failure_releases_lock(self):
+        with patch.object(gateway.socket, 'create_connection', side_effect=TimeoutError):
+            with self.assertRaises(TimeoutError):
+                gateway.rpc({'op': 'state'}, timeout=.01)
+        self.assertTrue(gateway.RPC_LOCK.acquire(blocking=False))
+        gateway.RPC_LOCK.release()
 
 
 if __name__ == '__main__': unittest.main()
