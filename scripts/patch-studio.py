@@ -90,6 +90,33 @@ def patch(root, adapter=None):
 ''' + anchor)
     soapy += "\n" + (adapter / "soapy_rates.rs").read_text(encoding="utf-8")
     soapy_path.write_text(soapy, encoding="utf-8")
+    recorder_path = root / "src/recorder/mod.rs"
+    recorder = recorder_path.read_text(encoding="utf-8")
+    recorder = replace_once(recorder, "    cmd_tx: Sender<RecorderCmd>,",
+                           "    cmd_tx: Sender<RecorderCmd>,\n    input_stop: Sender<()>,\n    input_join: Option<JoinHandle<()>>,")
+    recorder = replace_once(recorder, "        let pcm_tx = SenderProxy::new(cmd_tx.clone());\n", "")
+    recorder = replace_once(recorder, '            .context("spawn opus-rec thread")?;',
+                           '            .context("spawn opus-rec thread")?;\n        let (pcm_tx, input_stop, input_join) = spawn_pcm_forwarder(cmd_tx.clone());')
+    recorder = replace_once(recorder, "                cmd_tx,\n                join: Some(join),",
+                           "                cmd_tx,\n                input_stop,\n                input_join: Some(input_join),\n                join: Some(join),")
+    recorder = replace_once(recorder, "            pcm_tx.into_pcm_sender(),", "            pcm_tx,")
+    # Both explicit stop and Drop join the forwarder before the encoder.
+    anchor = "        let _ = self.cmd_tx.send(RecorderCmd::Stop);"
+    if recorder.count(anchor) != 2:
+        raise RuntimeError("Upstream recorder shutdown changed")
+    recorder = recorder.replace(anchor, "        self.finish_input();")
+    recorder = replace_once(recorder, "impl RecordingSession {", '''impl RecordingSession {
+    fn finish_input(&mut self) {
+        if let Some(handle) = self.input_join.take() {
+            let _ = self.input_stop.send(());
+            let _ = handle.join();
+        }
+    }
+''')
+    begin = recorder.index("/// Tiny shim that wraps")
+    end = recorder.index("/// Outcome of one inner", begin)
+    recorder = recorder[:begin] + (adapter / "recorder_forwarder.rs").read_text(encoding="utf-8") + "\n\n" + recorder[end:]
+    recorder_path.write_text(recorder, encoding="utf-8")
 
 
 if __name__ == "__main__":
