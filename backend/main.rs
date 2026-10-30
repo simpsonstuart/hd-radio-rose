@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 mod app;
 mod runtime;
+mod constellation;
 mod art_cache;
 mod audio;
 mod collage;

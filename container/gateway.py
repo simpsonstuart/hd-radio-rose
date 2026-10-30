@@ -183,7 +183,7 @@ def make_handler(base, alerts=None):
                     return self.json_response(alerts.snapshot())
                 if route == "/api/alerts/counties" and alerts is not None:
                     return self.json_response(json.loads(Path(__file__).with_name('same-counties.json').read_text()))
-                if route in {"/api/state", "/api/spectrum", "/api/log"}:
+                if route in {"/api/state", "/api/spectrum", "/api/constellation", "/api/log"}:
                     result = rpc({"op": route.rsplit("/", 1)[1]})
                     return self.json_response(result, 503 if "error" in result else 200)
                 if route == "/api/log.csv":

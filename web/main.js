@@ -12,13 +12,17 @@ createApp({
     const state = ref(null), connected = ref(false), error = ref(''), pending = ref(false);
     const active = ref('Listen'), order = ref(layoutRead(localStorage)), theme = ref(localStorage.getItem('rose-theme') || 'dark');
     const frequency = ref(101.1), audioOn = ref(false), audioStatus = ref('Audio off'), volume = ref(.8);
-    const player = ref(null), spectrum = ref(null), waterfall = ref(null), constellation = ref(null);
+    const player = ref(null), spectrum = ref(null), waterfall = ref(null), constellation = ref(null), constellationUpper = ref(null), constellationFrame = ref(null);
     const log = ref([]), logView = ref('timeline'), query = ref(''), files = ref([]);
     const weatherIndex = ref(0), weatherPlaying = ref(true), weatherTimer = ref(null), editPreset = ref(null);
     const deviceIndex = ref(''), remoteHost = ref(''), remotePort = ref(55132), remoteExtra = ref('');
     let closed = false, stateTimer, scopeTimer, detailsTimer, previousGeneration = -1, dragTab;
     const seeking = ref(false), seekMessage = ref('');
-    let seekCancelled = false;
+    let seekCancelled = false, constellationExpiry, constellationEpoch = 0;
+    function clearConstellation() {
+      clearTimeout(constellationExpiry); constellationEpoch++; constellationFrame.value = null;
+      drawConstellation(constellation.value, null); drawConstellation(constellationUpper.value, null);
+    }
     const tuningDisabled = computed(() => pending.value || !connected.value || !state.value?.streaming || state.value?.retuning || seeking.value);
     const sourceKind = ref('sdr');
     const isTv = computed(() => sourceKind.value==='hdhomerun'||state.value?.kind==='hdhomerun');
@@ -34,7 +38,7 @@ createApp({
       return rows.filter(r => `${r.title} ${r.artist}`.toLowerCase().includes(term));
     });
     async function get(path, options = {}) {
-      const response = await fetch(receiverUrl(path), { ...options, signal: AbortSignal.timeout(40000), cache: 'no-store' });
+      const response = await fetch(receiverUrl(path), { signal: AbortSignal.timeout(40000), ...options, cache: 'no-store' });
       let result;
       try { result = await response.json(); } catch { throw new Error(`Server returned ${response.status}; reload to sign in.`); }
       if (!response.ok || result.error) throw new Error(result.error || `HTTP ${response.status}`);
@@ -94,8 +98,23 @@ createApp({
         if (active.value === 'Recordings') files.value = (await get('/api/recordings')).files;
       } catch (e) { error.value = e.message; }
     }
+    async function measuredConstellation() {
+      if (active.value !== 'Spectrum' || isTv.value || isWeather.value || !connected.value || !digitalLocked(state.value) || document.hidden) { clearConstellation(); return; }
+      const frequency = state.value.frequency, band = state.value.band, started = Date.now(), epoch = constellationEpoch;
+      try {
+        const frame = await get('/api/constellation', {signal: AbortSignal.timeout(1500)});
+        const remaining = 2000 - (Date.now() - started) - (frame.age_ms || 0);
+        if (epoch !== constellationEpoch || closed || active.value !== 'Spectrum' || document.hidden || !connected.value || !digitalLocked(state.value)
+            || frequency !== state.value.frequency || band !== state.value.band || !frame.available || remaining <= 0) { clearConstellation(); return; }
+        constellationFrame.value = frame;
+        drawConstellation(constellation.value, frame, 'lower');
+        drawConstellation(constellationUpper.value, frame, 'upper');
+        clearTimeout(constellationExpiry); constellationExpiry = setTimeout(clearConstellation, remaining);
+      } catch { clearConstellation(); }
+    }
     async function scopes() {
       try {
+        await measuredConstellation();
         if (!isTv.value && connected.value && !document.hidden && ['Listen', 'Spectrum'].includes(active.value)) {
           const s = await get('/api/spectrum');
           if (s.generation !== previousGeneration) {
@@ -103,7 +122,6 @@ createApp({
             drawWaterfall(waterfall.value, s.bins);
             previousGeneration = s.generation;
           }
-          drawConstellation(constellation.value, (state.value.mer_lower + state.value.mer_upper) / 2);
         }
       } catch { /* Connection state is handled by the state poll. */ }
       finally { if (!closed) scopeTimer = setTimeout(scopes, active.value === 'Spectrum' ? 250 : 1000); }
@@ -146,13 +164,16 @@ createApp({
     watch(theme, v => { document.documentElement.dataset.theme = v; localStorage.setItem('rose-theme', v); }, { immediate: true });
     watch(volume, v => { if (player.value) player.value.volume = Number(v); });
     watch(active, async () => { previousGeneration = -1; await nextTick(); details(); });
+    watch([() => active.value, () => connected.value, () => state.value?.frequency, () => state.value?.band, () => digitalLocked(state.value)], async () => {
+      clearConstellation(); await nextTick(); clearConstellation();
+    });
     onMounted(() => {
       refresh(); scopes(); detailsTimer = setInterval(details, 5000);
       weatherTimer.value = setInterval(() => { const n = state.value?.weather?.length || 0; if (weatherPlaying.value && n) weatherIndex.value = (weatherIndex.value + 1) % n; }, 800);
     });
-    onUnmounted(() => { closed = true; seekCancelled = true; clearTimeout(stateTimer); clearTimeout(scopeTimer); clearInterval(detailsTimer); clearInterval(weatherTimer.value); stopAudio(); });
+    onUnmounted(() => { closed = true; clearConstellation(); seekCancelled = true; clearTimeout(stateTimer); clearTimeout(scopeTimer); clearInterval(detailsTimer); clearInterval(weatherTimer.value); stopAudio(); });
     return { isTv, accept, setSource:s=>{sourceKind.value=s.kind||'sdr';}, receiverUrl, isAm, isWeather, weatherChannels, formatFrequency, seeking, seekMessage, tuningDisabled, seek, cancelSeek: () => { seekCancelled = true; }, state, connected, error, pending, active, order, theme, frequency, audioOn, audioStatus, volume,
-      player, spectrum, waterfall, constellation, current, station, config, logRows, logView, query, files,
+      player, spectrum, waterfall, constellation, constellationUpper, constellationFrame, current, station, config, logRows, logView, query, files,
       weatherIndex, weatherPlaying, weather, editPreset, deviceIndex, remoteHost, remotePort, remoteExtra,
       command, tune, step, toggleAudio, audioFailed, destructive, presetEdit, presetSave, selectDevice, applyRemote,
       format, time, media, recordingUrl, db, digitalLocked, hdAvailable, receiverStatus, dropTab, dragStart: t => { dragTab = t; }, tabs,
@@ -179,17 +200,21 @@ createApp({
       <div v-if="state.preview" class="notice">UI preview data — no SDR or headless engine is running in this preview.</div>
       <div v-if="station.alert" class="notice alert" role="alert"><b>Broadcast emergency alert</b> {{station.alert}}</div>
       <section class="tuner panel" aria-label="Tuner">
+        <div class="tuner-heading"><div><span class="eyebrow">RECEIVER CONTROL</span><h2>Tune in</h2></div><button :class="['primary',{running:state.streaming}]" @click="command(state.streaming?'Stop':'Start')" :disabled="seeking||pending||!connected||state.retuning">{{state.retuning?'Retuning…':state.streaming?'■ Stop receiver':'▶ Start receiver'}}</button></div>
+        <div class="tuner-controls">
         <label class="band-picker">Band<select :value="state.band||'fm'" @change="command('SelectBand',$event.target.value)" :disabled="pending||!connected||seeking||state.retuning"><option value="fm">FM / HD Radio</option><option value="noaa">NOAA Weather</option><option value="am">Broadcast AM / HD Radio</option></select></label>
         <label v-if="isAm" class="band-picker">AM reception<select :value="state.am_converter?'hamitup':'direct'" @change="command('SetAmConverter',$event.target.value==='hamitup')" :disabled="state.streaming||state.retuning||pending||!connected"><option value="hamitup">Ham It Up (+125 MHz)</option><option value="direct">Native low-frequency tuning</option></select><small>SDR: {{state.hardware_frequency_mhz?.toFixed(3)}} MHz</small></label>
         <label v-if="isWeather" class="weather-picker">Weather channel<select :value="state.frequency" @change="command('TuneWeather',Number($event.target.value))" :disabled="tuningDisabled"><option v-for="f in weatherChannels" :key="f" :value="f">{{f.toFixed(3)}} MHz</option></select></label>
-        <form v-if="!isWeather" @submit.prevent="tune" class="frequency"><button type="button" @click="step(-.2)" :disabled="tuningDisabled" aria-label="Tune down">−</button><label><input v-model="frequency" type="text" inputmode="decimal" required maxlength="6" :disabled="tuningDisabled" :aria-label="isAm?'Frequency kHz':'Frequency MHz'" :title="isAm?'Enter 530–1700 kHz':'Enter 98.3 or 983'"><span>{{isAm?'kHz / AM':'MHz / FM'}}</span></label><button type="button" @click="step(.2)" :disabled="tuningDisabled" aria-label="Tune up">+</button><button type="submit" :disabled="tuningDisabled">Tune</button></form>
-        <div v-if="!isAm" class="seek-controls"><button @click="seek(-1)" :disabled="tuningDisabled" title="Seek previous station; stops recording">◀ Seek</button><button @click="seek(1)" :disabled="tuningDisabled" title="Seek next station; stops recording">Seek ▶</button><button v-if="seeking" @click="cancelSeek">Cancel seek</button></div>
-        <div v-if="!isWeather" class="hd-channels" aria-label="HD subchannels"><span :class="['hd-indicator',{lit:connected&&digitalLocked(state)}]" role="status" :aria-label="connected&&digitalLocked(state)?'HD Radio digital signal locked':'HD Radio digital signal unavailable'"><img src="/hd-radio.svg" alt="" aria-hidden="true"></span><button v-for="n in (config.show_hd5_hd8?8:4)" :key="n" :class="{selected:connected&&hdAvailable(state,n-1)&&state.selected===n-1}" :title="hdAvailable(state,n-1)?(station.programs[n-1].short_name || 'Digital channel available'):'No digital service available'" @click="command('SelectProgram',n-1)" :disabled="seeking||pending||!connected||!hdAvailable(state,n-1)">HD{{n}}</button></div>
-        <button :class="['primary',{running:state.streaming}]" @click="command(state.streaming?'Stop':'Start')" :disabled="seeking||pending||!connected||state.retuning">{{state.retuning?'Retuning…':state.streaming?'■ Stop receiver':'▶ Start receiver'}}</button>
+        <div v-if="!isWeather" class="frequency-group"><span class="control-label">Frequency</span><form @submit.prevent="tune" class="frequency"><button type="button" @click="step(-.2)" :disabled="tuningDisabled" aria-label="Tune down">−</button><label><input v-model="frequency" type="text" inputmode="decimal" required maxlength="6" :disabled="tuningDisabled" :aria-label="isAm?'Frequency kHz':'Frequency MHz'" :title="isAm?'Enter 530–1700 kHz':'Enter 98.3 or 983'"><span>{{isAm?'kHz / AM':'MHz / FM'}}</span></label><button type="button" @click="step(.2)" :disabled="tuningDisabled" aria-label="Tune up">+</button><button type="submit" :disabled="tuningDisabled">Tune</button></form></div>
+        <div v-if="!isAm" class="seek-group"><span class="control-label">Find a station</span><div class="seek-controls"><button @click="seek(-1)" :disabled="tuningDisabled" title="Seek previous station; stops recording">◀ Seek</button><button @click="seek(1)" :disabled="tuningDisabled" title="Seek next station; stops recording">Seek ▶</button><button v-if="seeking" @click="cancelSeek">Cancel seek</button></div></div>
+        </div>
+        <div class="tuner-footer">
+        <div v-if="!isWeather" class="hd-channels" aria-label="HD subchannels"><span :class="['hd-indicator',{lit:connected&&digitalLocked(state)}]" role="status" :aria-label="connected&&digitalLocked(state)?'HD Radio digital signal locked':'HD Radio digital signal unavailable'"><img src="/hd-radio.svg" alt="" aria-hidden="true"></span><div class="hd-options"><button v-for="n in (config.show_hd5_hd8?8:4)" :key="n" :class="{selected:connected&&hdAvailable(state,n-1)&&state.selected===n-1}" :title="hdAvailable(state,n-1)?(station.programs[n-1].short_name || 'Digital channel available'):'No digital service available'" @click="command('SelectProgram',n-1)" :disabled="seeking||pending||!connected||!hdAvailable(state,n-1)">HD{{n}}</button></div></div>
+        <p class="tuner-hint">{{!state.streaming&&!state.retuning?'Start the receiver to tune or seek.':isWeather?'Select a weather channel or seek a broadcast.':digitalLocked(state)?'Select an available HD channel.':'HD channels become available when a digital signal locks.'}}</p>
+        </div>
       </section>
       <p v-if="seeking" class="muted">Seeking stations; recording stops when tuning changes. Keep this page open, or cancel to stay on the current frequency.</p>
       <p v-if="seekMessage" class="receiver-status" role="status">{{seekMessage}}</p>
-      <p v-if="!state.streaming&&!state.retuning" class="muted">Start the receiver to tune or seek.</p>
       <p class="receiver-status" role="status">{{receiverStatus(state)}}</p>
 
       <template v-if="active==='Listen'">
@@ -208,7 +233,7 @@ createApp({
 
       <template v-if="active==='Spectrum'">
         <section class="panel scope"><div class="panel-title"><span>LIVE SPECTRUM & WATERFALL</span><span>1.488375 MS/s · 1024 bins</span></div><canvas ref="spectrum" width="1024" height="260" aria-label="Live FFT spectrum"></canvas><div class="axis"><span>−744 kHz</span><span>{{formatFrequency(state.frequency,state.band)}} {{isAm?'kHz':'MHz'}}</span><span>+744 kHz</span></div><canvas ref="waterfall" width="1024" height="256" aria-label="Live waterfall"></canvas><p v-if="!state.streaming" class="muted">Start the receiver to see live I/Q measurements.</p></section>
-        <div class="two-col"><section class="panel"><div class="panel-title"><span>CONSTELLATION</span><span>MER-derived illustration</span></div><canvas ref="constellation" width="440" height="240" aria-label="MER-derived QPSK illustration"></canvas><p class="muted">Like Studio's scope, this illustrates signal quality from MER; these are not measured I/Q symbols.</p></section><section class="panel"><div class="panel-title"><span>GAIN CONTROLLER</span></div><dl v-if="state.agc"><template v-for="(v,k) in state.agc"><dt>{{k.replaceAll('_',' ')}}</dt><dd>{{format(v)}}</dd></template></dl><p v-else class="empty">AGC telemetry appears when tuning.</p></section></div>
+        <div class="two-col scope-diagnostics"><section class="panel constellation-panel"><div class="panel-title"><span>CONSTELLATION</span><span>{{constellationFrame ? (constellationFrame.modulation===64?'Measured 64-QAM · AM primary':'Measured QPSK · FM') : 'Awaiting measured symbols'}}</span></div><div class="constellation-plots"><figure><figcaption>Lower sideband <span v-if="constellationFrame">· {{constellationFrame.lower.length}} samples</span></figcaption><canvas ref="constellation" width="360" height="360" aria-label="Measured lower-sideband constellation"></canvas></figure><figure><figcaption>Upper sideband <span v-if="constellationFrame">· {{constellationFrame.upper.length}} samples</span></figcaption><canvas ref="constellationUpper" width="360" height="360" aria-label="Measured upper-sideband constellation"></canvas></figure></div><p class="muted" role="status">{{constellationFrame?'Live post-equalization I/Q samples. Crosses mark ideal decision points.':isWeather?'Constellation is not available for analog NOAA broadcasts.':'Waiting for fresh decoder samples and HD lock.'}}</p><p class="muted">{{isAm?'Primary data carriers only; training symbols excluded.':'Data carriers only; reference carriers excluded.'}} Fixed axes preserve amplitude distortion.</p></section><section class="panel"><div class="panel-title"><span>GAIN CONTROLLER</span></div><dl v-if="state.agc"><template v-for="(v,k) in state.agc"><dt>{{k.replaceAll('_',' ')}}</dt><dd>{{format(v)}}</dd></template></dl><p v-else class="empty">AGC telemetry appears when tuning.</p></section></div>
       </template>
 
       <template v-if="active==='Station'">

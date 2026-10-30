@@ -39,12 +39,19 @@ RUN git init nrsc5 && cd nrsc5 \
 # Use distro FFTW/USB/RTL-SDR: upstream's bundled FFTW enables x86 AVX.
 # Keep the upstream HDC-patched FAAD2 build (ordinary distro FAAD cannot decode HDC).
 # Scalar nrsc5 is portable; do not use the upstream ARM32 NEON compiler flags.
+COPY scripts/patch-nrsc5.py /build/patch-nrsc5.py
+COPY backend/constellation.c /build/backend/constellation.c
+RUN python3 /build/patch-nrsc5.py /src/nrsc5 /build/backend
 RUN cmake -S nrsc5 -B /build/nrsc5 -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_CLI=OFF -DUSE_STATIC=OFF -DUSE_SSE=OFF -DUSE_NEON=OFF \
     -DUSE_SYSTEM_FFTW=ON -DUSE_SYSTEM_RTLSDR=ON -DUSE_SYSTEM_LIBUSB=ON \
     -DUSE_FAAD2=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     && cmake --build /build/nrsc5 --target nrsc5 -j 2 \
     && cp /build/nrsc5/src/libnrsc5.so /src/studio/bin/libnrsc5.so
+COPY scripts/test-constellation.c /build/test-constellation.c
+RUN cc -std=c11 -Wall -Wextra -Werror -I/src/nrsc5/include -I/src/nrsc5/src \
+    -I/build/nrsc5/src -I/build/backend /build/test-constellation.c -lm -o /build/test-constellation \
+    && /build/test-constellation
 COPY scripts/patch-studio.py /build/patch-studio.py
 COPY backend/ /build/backend/
 RUN python3 /build/patch-studio.py /src/studio /build/backend

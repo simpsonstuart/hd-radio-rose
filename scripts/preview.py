@@ -52,6 +52,7 @@ class Preview(SimpleHTTPRequestHandler):
         if path == '/api/alerts/counties': return self.respond([])
         if path == '/api/state': return self.respond(STATE)
         if path == '/api/spectrum': return self.respond({"bins": [], "generation": 0})
+        if path == '/api/constellation': return self.respond({"available": False, "source": "post-equalization", "lower": [], "upper": []})
         if path == '/api/log': return self.respond({"entries": []})
         if path == '/api/recordings': return self.respond({"files": []})
         return super().do_GET()

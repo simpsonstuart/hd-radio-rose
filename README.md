@@ -41,7 +41,7 @@ rather than reimplementing the decoder. The frontend exposes these capabilities:
 | Device settings | Discovery, device selection, per-element gains, antenna, PPM, gain-cache reset and RMS target |
 | Remote SDRs | SoapyRemote and rtl_tcp configuration |
 | Spectrum / waterfall | Browser canvas from the real upstream FFT tap; smoothing controls |
-| Constellation | MER-derived QPSK illustration, explicitly labeled; upstream also synthesizes this display |
+| Constellation | Measured post-equalization symbols, separate sidebands: FM QPSK and AM primary 64-QAM |
 | Artwork collage | Rolling eight-hour cache, play weighting, tile limit, cover blocking/unblocking |
 | Traffic and weather | Existing tile/composite processors, weather animation, pause and timeline scrub |
 | Song history | Persistent timeline, top-played grouping, search, retention, CSV download |
@@ -163,6 +163,7 @@ proxy should preserve the Host header and avoid buffering `/audio.mp3`.
 | `GET /healthz` | Unauthenticated boolean; recent engine heartbeat + audio encoder output |
 | `GET /api/state` | Receiver, station, program, device, artwork, map and config snapshot |
 | `GET /api/spectrum` | FFT bins, generation, sample rate, center frequency |
+| `GET /api/constellation` | Latest measured sideband I/Q pairs, modulation, generation, sample age and availability |
 | `GET /api/log`, `/api/log.csv` | History JSON / CSV download |
 | `GET /api/recordings` | Downloadable recording listing |
 | `GET /api/recording?name=…` | Confined `.opus` download |
@@ -616,3 +617,32 @@ exclusive tuning, cancellation, lock conflicts, durable logs and release recover
 Live signal readings, RF scans, and tuner locking still require validation on a
 physical HDHomeRun; no such hardware is attached to this development workspace.
 Rebuild the container to install the new control dependency before using DX features.
+
+### Measured constellation display
+
+The Spectrum tab plots decoder samples after equalization and before symbol
+slicing, rather than synthesizing dots from MER. This implements the idea in
+[Studio issue 2](https://github.com/LTCAshraven/nrsc5-studio/issues/2) using a
+ROSE-local libnrsc5 extension; it is not the proposed upstream API from
+[nrsc5 issue 507](https://github.com/theori-io/nrsc5/issues/507).
+
+- FM: QPSK data carriers from all active partitions, with reference carriers
+  excluded. Four OFDM symbols are sampled from every fourth synchronized block.
+- AM: primary lower/upper 64-QAM data carriers, excluding training symbols.
+  Secondary, tertiary, and PIDS constellations are not included.
+- Each sideband has fixed, equal I/Q axes. Crosses show ideal points; measured
+  samples retain their amplitude, including PAPR-related displacement. Points
+  outside the plot are counted rather than clamped to its edges.
+- The private C event (`0x524f5301`) carries at most 1024 pairs per sideband.
+  The Rust callback copies them into a single latest-frame buffer using
+  `try_lock`; it skips a frame when busy instead of queuing telemetry.
+- The receiver-scoped API exposes only fresh samples while synchronized and
+  streaming. Samples expire after two seconds. Retunes, stops, lost sync,
+  connection failures, and NOAA mode clear or suppress the display. The browser
+  polls this endpoint only while the Spectrum tab is visible.
+
+Rebuild the container to install the patched decoder and matching Rust binding;
+replacing only the web assets cannot enable measured samples on an older engine.
+The Docker build runs a known-symbol C capture test and Rust snapshot tests.
+Actual RF accuracy and audio continuity still require testing with a live HD
+station or a known IQ recording.

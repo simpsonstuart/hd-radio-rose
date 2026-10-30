@@ -19,15 +19,43 @@ export function drawWaterfall(canvas, bins) {
   for (let i = 0; i < w; i++) { row.data.set(waveformColor(bins[Math.floor(i * bins.length / w)]), i * 4); row.data[i * 4 + 3] = 255; }
   c.putImageData(row, 0, 0);
 }
-export function drawConstellation(canvas, mer) {
+// Fixed axes preserve measured amplitude and transmitter-induced distortion.
+export function constellationPoints(frame, side) {
+  if (!frame?.available || ![4, 64].includes(frame.modulation) || !['lower', 'upper'].includes(side)) return [];
+  return (Array.isArray(frame[side]) ? frame[side] : []).slice(0, 1024)
+    .filter(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite));
+}
+export function drawConstellation(canvas, frame, side = 'lower') {
   if (!canvas) return;
   const c = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
+  const extent = frame?.modulation === 64 ? 4.5 : 2.5;
+  const size = Math.min(w, h) - 56, x0 = (w - size) / 2, y0 = (h - size) / 2;
+  const x = v => x0 + size * (v + extent) / (2 * extent);
+  const y = v => y0 + size * (extent - v) / (2 * extent);
   c.fillStyle = '#0a1218'; c.fillRect(0, 0, w, h);
-  c.strokeStyle = '#294049'; c.beginPath(); c.moveTo(w / 2, 0); c.lineTo(w / 2, h); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.stroke();
-  const spread = Math.max(2, 60 * Math.pow(10, -Math.max(0, mer || 0) / 20));
-  c.fillStyle = '#a7e8c580';
-  for (let i = 0; i < 400; i++) {
-    const noise = () => Math.sqrt(-2 * Math.log(Math.max(0.0001, Math.random()))) * Math.cos(2 * Math.PI * Math.random()) * spread;
-    c.fillRect((i % 2 ? .7 : .3) * w + noise(), (i % 4 < 2 ? .7 : .3) * h + noise(), 2, 2);
+  c.lineWidth = 1; c.strokeStyle = '#294049';
+  c.beginPath(); c.moveTo(x(-extent), y(0)); c.lineTo(x(extent), y(0));
+  c.moveTo(x(0), y(-extent)); c.lineTo(x(0), y(extent)); c.stroke();
+  c.strokeRect(x0, y0, size, size);
+  c.fillStyle = '#8aa2ad'; c.font = '12px monospace'; c.textAlign = 'center';
+  c.fillText('In-phase (I)', w / 2, h - 7); c.fillText('Q', w / 2, 17);
+  c.fillText(String(-extent), x(-extent), y(0) + 16); c.fillText(String(extent), x(extent), y(0) + 16);
+  const points = constellationPoints(frame, side);
+  if (!points.length) {
+    c.fillText('No measured symbols', w / 2, h / 2 - 20);
+    return;
   }
+  const levels = frame.modulation === 64 ? [-3.5,-2.5,-1.5,-.5,.5,1.5,2.5,3.5] : [-1,1];
+  c.strokeStyle = '#68828d';
+  for (const i of levels) for (const q of levels) {
+    c.beginPath(); c.moveTo(x(i) - 3, y(q)); c.lineTo(x(i) + 3, y(q));
+    c.moveTo(x(i), y(q) - 3); c.lineTo(x(i), y(q) + 3); c.stroke();
+  }
+  c.fillStyle = side === 'upper' ? '#91c9f0aa' : '#a7e8c5aa';
+  let outside = 0;
+  for (const [i, q] of points) {
+    if (Math.abs(i) > extent || Math.abs(q) > extent) { outside++; continue; }
+    c.fillRect(x(i) - 1, y(q) - 1, 2, 2);
+  }
+  if (outside) { c.fillStyle = '#8aa2ad'; c.fillText(`${outside} points outside axes`, w / 2, y0 + 16); }
 }

@@ -71,6 +71,9 @@ impl Nrsc5App {
             },
             "state" => self.web_state(),
             "log" => json!({"entries": self.play_log.entries()}),
+            "constellation" => crate::constellation::snapshot(
+                self.app_state.is_streaming && self.app_state.currently_synced
+                && !self.wx_band && self.retune_task.is_none()),
             "spectrum" => {
                 if let Some(tap) = &self.app_state.spectrum_tap {
                     tap.snapshot_into(&mut self.app_state.spectrum_snapshot);

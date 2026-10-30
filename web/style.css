@@ -30,3 +30,86 @@
 .television video { width: 100%; max-height: 70vh; aspect-ratio: 16 / 9; background: #000; margin: 1rem 0; }
 .tv-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; }
 .television pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Shared control rhythm and responsive receiver layout. */
+:root { --radius: 14px; }
+body { line-height: 1.5; }
+button, .button, input, select { transition: border-color .15s ease, background-color .15s ease; }
+button, .button { min-height: 38px; border-radius: 8px; }
+button:disabled { opacity: .55; }
+button:disabled:hover { background: transparent; border-color: var(--border); filter: none; }
+.panel { border-radius: var(--radius); box-shadow: 0 4px 18px #00000008; }
+.panel-title { font-weight: 600; margin-bottom: 20px; }
+.page-header { margin-top: 28px; }
+.header-status { display: flex; align-items: center; }
+.source-panel { padding: 18px 22px; }
+.source-panel .panel-title { margin-bottom: 12px; }
+.source-panel > label { display: grid; grid-template-columns: 150px minmax(0, 420px); align-items: center; gap: 14px; font-size: 12px; color: var(--muted); }
+.source-panel > .muted { margin-top: 10px; font-size: 11px; }
+.source-form label, .tv-controls label, .same-controls label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--muted); min-width: 0; }
+.source-form { padding: 22px 0; }
+.source-form h3 { margin-bottom: 0; }
+.source-form > button { align-self: end; }
+.source-row { margin-bottom: 16px; }
+.source-row p { font-size: 12px; color: var(--muted); margin: 6px 0 12px; overflow-wrap: anywhere; }
+.source-row button { margin-bottom: 6px; }
+.tuner.panel { display: block; padding: 0; overflow: hidden; }
+.tuner-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.tuner-heading .eyebrow { margin-bottom: 4px; font-size: 9px; }
+.tuner-heading h2 { font-size: 20px; letter-spacing: -.4px; }
+.tuner-heading .primary { min-height: 42px; padding-inline: 18px; }
+.tuner-controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px 28px; padding: 24px; }
+.band-picker, .weather-picker { display: flex; flex: 1 1 180px; max-width: 280px; flex-direction: column; gap: 9px; color: var(--muted); font-size: 11px; font-weight: 500; }
+.band-picker select, .weather-picker select { min-height: 52px; font-size: 12px; }
+.band-picker small { font-size: 10px; }
+.control-label { display: block; font-size: 11px; color: var(--muted); font-weight: 500; margin-bottom: 9px; }
+.frequency-group { flex: 1 1 320px; min-width: 0; }
+.tuner .frequency { display: flex; width: 100%; gap: 8px; min-height: 52px; }
+.tuner .frequency label { display: flex; flex: 1; align-items: baseline; justify-content: center; gap: 8px; min-width: 0; }
+.tuner .frequency input[inputmode=decimal] { width: 4.2ch; min-width: 0; font-size: 36px; font-weight: 500; line-height: 1.4; letter-spacing: -1.5px; font-variant-numeric: tabular-nums; text-align: center; border-radius: 4px; }
+.tuner .frequency input:disabled { opacity: .75; }
+.tuner .frequency label span { font-size: 10px; }
+.tuner .frequency button { min-width: 38px; min-height: 42px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.tuner .frequency button[type=submit] { font-weight: 600; }
+.seek-group { flex: 0 1 auto; }
+.seek-controls { flex-wrap: wrap; gap: 8px; min-height: 52px; align-items: center; }
+.seek-controls button { min-height: 42px; white-space: nowrap; }
+.tuner-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 14px 24px; padding: 16px 24px; border-top: 1px solid var(--border); background: var(--input); }
+.hd-channels { display: flex; align-items: center; flex-wrap: nowrap; gap: 14px; min-width: 0; }
+.hd-indicator { padding: 0; }
+.hd-indicator img { width: 34px; height: 34px; }
+.hd-options { display: grid; grid-template-columns: repeat(4, minmax(40px, 1fr)); gap: 6px; }
+.hd-channels button { min-height: 34px; padding: 7px 11px; }
+.hd-channels button:disabled { opacity: .55; }
+.tuner-hint { flex: 1 1 220px; font-size: 11px; color: var(--muted); line-height: 1.6; margin-left: auto; text-align: right; }
+.receiver-status { font-size: 11px; padding: 12px 4px 20px; }
+.preset { background: var(--input); overflow: hidden; }
+.preset>button:first-child { min-height: 110px; padding: 18px 32px 18px 16px; }
+.preset strong { font-size: 13px; }
+.settings-grid .panel>label { gap: 8px; }
+.settings-grid input:not([type=checkbox],[type=range]), .settings-grid select { min-height: 42px; }
+.tv-controls label { flex: 1 1 200px; }
+@media (min-width: 1450px) { .hd-options { grid-template-columns: repeat(8, minmax(40px, 1fr)); } }
+@media (max-width: 760px) {
+  .source-panel { padding: 16px; }
+  .source-panel > label { grid-template-columns: 1fr; gap: 8px; }
+  .tuner-heading { padding: 16px; }
+  .tuner-controls { padding: 18px 16px; gap: 18px; }
+  .band-picker, .weather-picker { max-width: none; }
+  .frequency-group { flex-basis: 100%; }
+  .tuner-footer { padding: 16px; }
+  .tuner-hint { flex-basis: 100%; text-align: left; margin: 0; }
+  .tuner .frequency input[inputmode=decimal] { font-size: 32px; }
+  .tuner .frequency label { gap: 4px; }
+  .tuner .frequency button { padding-inline: 10px; }
+  .tuner .frequency label span { font-size: 9px; }
+  .source-form { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { button, .button, input, select { transition: none; } }
+.constellation-plots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.constellation-plots figure { margin: 0; min-width: 0; }
+.constellation-plots figcaption { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.constellation-plots canvas { width: 100%; height: auto; max-height: none; aspect-ratio: 1; }
+.constellation-panel > p { margin-top: 12px; font-size: 11px; }
+.scope-diagnostics { grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); }
+@media (max-width: 1100px) { .scope-diagnostics { grid-template-columns: 1fr; } }
+@media (max-width: 420px) { .constellation-plots { grid-template-columns: 1fr; } }

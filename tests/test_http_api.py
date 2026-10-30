@@ -56,6 +56,14 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(json.loads(body), {'ready': True})
             call.assert_called_once_with({'op': 'state'})
 
+    def test_constellation_uses_receiver_rpc_without_manufacturing_points(self):
+        frame = {'available': True, 'modulation': 4, 'lower': [[1.23, -0.8]], 'upper': [[-1.1, 1.2]]}
+        with patch.object(gateway, 'rpc', return_value=frame) as call:
+            status, body = self.request('GET', '/api/constellation')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), frame)
+            call.assert_called_once_with({'op': 'constellation'})
+
     def test_alert_settings_api_and_origin_protection(self):
         payload = json.dumps({'counties':['053077'], 'include_tests':False})
         headers = {'Content-Type':'application/json'}

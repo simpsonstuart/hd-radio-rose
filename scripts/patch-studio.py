@@ -58,6 +58,23 @@ def patch(root, adapter=None):
     analog_path.write_text(analog_path.read_text(encoding="utf-8") + "\n" + (adapter / "nfm.rs").read_text(encoding="utf-8") + "\n" + (adapter / "am.rs").read_text(encoding="utf-8"), encoding="utf-8")
     (root / "src/app.rs").write_text(app, encoding="utf-8")
     (root / "src/runtime.rs").write_text((adapter / "runtime.rs").read_text(encoding="utf-8"), encoding="utf-8")
+    (root / "src/constellation.rs").write_text((adapter / "constellation.rs").read_text(encoding="utf-8"), encoding="utf-8")
+    sys_path = root / "src/ffi/nrsc5_sys.rs"
+    bindings = sys_path.read_text(encoding="utf-8")
+    bindings = replace_once(bindings, "pub union nrsc5_event_payload {", "pub union nrsc5_event_payload {\n    pub rose_constellation: crate::constellation::Payload,")
+    sys_path.write_text(bindings, encoding="utf-8")
+    api_path = root / "src/ffi/api.rs"
+    api = api_path.read_text(encoding="utf-8")
+    api = replace_once(api, "        match evt.event {", '''        if evt.event == sys::NRSC5_EVENT_LOST_SYNC || evt.event == sys::NRSC5_EVENT_LOST_DEVICE {
+            crate::constellation::clear();
+        }
+        match evt.event {
+            crate::constellation::EVENT => {
+                // Private C event: copy borrowed floats during this callback.
+                unsafe { crate::constellation::capture(&evt.payload.rose_constellation); }
+            }''')
+    api = replace_once(api, "    pub fn open_pipe() -> Result<Self, Nrsc5ApiError> {", "    pub fn open_pipe() -> Result<Self, Nrsc5ApiError> {\n        crate::constellation::clear();")
+    api_path.write_text(api, encoding="utf-8")
     paths_path = root / "src/paths.rs"
     paths = paths_path.read_text(encoding="utf-8")
     paths = replace_once(paths, "            let exe = std::env::current_exe().ok()?;", "            if let Ok(path) = std::env::var(\"ROSE_DATA_DIR\") { return Some(PathBuf::from(path)); }\n            let exe = std::env::current_exe().ok()?;")
