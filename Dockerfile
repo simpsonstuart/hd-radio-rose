@@ -9,6 +9,7 @@ RUN npm run build
 FROM rust:1.95-bookworm AS build
 ARG STUDIO_REF=61064d27fcb4e7a7a231b9f6aa546e59bee00084
 ARG NRSC5_REF=a5c09723b135327aeef157770caae9aebf597547
+ARG MULTIMON_REF=b5f7d71c5e9b5a76093ba55c515968dc40f92804
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake build-essential pkg-config clang libclang-dev autoconf automake libtool \
@@ -18,6 +19,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcursor-dev libxinerama-dev libgl1-mesa-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+RUN git init multimon-ng && cd multimon-ng \
+    && git remote add origin https://github.com/EliasOenal/multimon-ng.git \
+    && git fetch --depth 1 origin "$MULTIMON_REF" && git checkout --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "$MULTIMON_REF" \
+    && cmake -S . -B /build/multimon -DCMAKE_BUILD_TYPE=Release \
+       -DX11_SUPPORT=OFF -DPULSE_AUDIO_SUPPORT=OFF -DSDL3_SCOPE=OFF -DBUILD_GEN_NG=OFF -DBUILD_TESTING=OFF \
+    && cmake --build /build/multimon --target multimon-ng -j 2
+COPY scripts/test-same-decoder.py /build/test-same-decoder.py
+RUN python3 /build/test-same-decoder.py /build/multimon/multimon-ng
 RUN git init studio && cd studio \
     && git remote add origin https://github.com/LTCAshraven/nrsc5-studio.git \
     && git fetch --depth 1 origin "$STUDIO_REF" && git checkout --detach FETCH_HEAD \
@@ -49,9 +59,10 @@ RUN mkdir -p /sources/studio/.cargo /sources/nrsc5 /sources/faad2 \
     && tar --exclude=.git --exclude=target --exclude=bin --exclude=.cargo \
        -cf - . | tar -xf - -C /sources/studio \
     && cp -a /src/nrsc5/. /sources/nrsc5/ \
+    && cp -a /src/multimon-ng /sources/multimon-ng && rm -rf /sources/multimon-ng/.git \
     && cp -a /build/nrsc5/faad2-prefix/src/faad2_external/. /sources/faad2/ \
     && rm -rf /sources/nrsc5/.git /sources/faad2/.git \
-    && printf 'STUDIO_REF=%s\nNRSC5_REF=%s\n' "$STUDIO_REF" "$NRSC5_REF" > /sources/versions.txt
+    && printf 'STUDIO_REF=%s\nNRSC5_REF=%s\nMULTIMON_REF=%s\n' "$STUDIO_REF" "$NRSC5_REF" "$MULTIMON_REF" > /sources/versions.txt
 COPY Dockerfile README.md LICENSE compose.yaml /sources/hd-radio-rose/
 COPY container/ /sources/hd-radio-rose/container/
 COPY scripts/ /sources/hd-radio-rose/scripts/
@@ -75,6 +86,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rtl-sdr hackrf usbutils libfftw3-single3 libopus0 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/studio/target/release/nrsc5-studio /opt/nrsc5-studio/nrsc5-studio
+COPY --from=build /build/multimon/multimon-ng /usr/local/bin/multimon-ng
 COPY --from=build /src/studio/bin/libnrsc5.so /usr/lib/nrsc5-studio/libnrsc5.so
 COPY --from=build /src/studio/res/map.png /usr/share/nrsc5-studio/map.png
 COPY --from=build /src/studio/LICENSE /src/studio/COPYING.GPL-3.0 /src/studio/THIRD_PARTY_NOTICES.md /usr/share/doc/nrsc5-studio/

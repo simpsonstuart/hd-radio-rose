@@ -1,0 +1,5 @@
+HD Radio symbol
+Source: https://hdradio.com/wp-content/themes/hdradio/dist/images/hdradio-logo.svg
+Symbol paths extracted unchanged from the official logo artwork; viewBox fitted to the symbol.
+HD Radio and the HD and arc logos are trademarks or registered trademarks of iBiquity Digital Corporation.
+This third-party artwork is not covered by this project's MIT license. No affiliation or endorsement is implied.

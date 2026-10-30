@@ -265,3 +265,82 @@ archive when redistributing images. Frontend dependencies can be restored from
 the lockfile; their bundled license notices remain in the generated code.
 System package copyright/source information is under `/usr/share/doc` and
 [Debian Sources](https://sources.debian.org/).
+
+### Tuning and seek
+
+Start the receiver before entering a frequency, stepping, recalling a preset, or
+seeking. Frequency entry accepts MHz (`98.3`) or shorthand (`983`, `1079`).
+The API continues to accept MHz only and rejects tuning while stopped.
+
+Seek scans 0.2 MHz channels in either direction, wraps once, and returns to the
+starting frequency if none is detected. It selects HD1 and stops on HD lock,
+RDS, or three fresh spectrum measurements indicating a centered FM signal.
+Analog detection uses an 8 dB channel-to-background threshold and excludes the
+DC spike; interference can cause false stops and weak stations may be skipped.
+Digital-only mode seeks HD lock only. Real-radio seek sensitivity is unverified.
+Each candidate gets up to six seconds after retuning; a full scan can take
+several minutes. Cancel stops further tuning (an already submitted retune may
+finish). Seeking runs in the browser, so keep the page open. Tuning stops any
+active recording, as with ordinary station changes.
+
+### NOAA Weather band
+
+Select **NOAA Weather** in the tuner’s Band menu. Start the receiver, choose a
+channel, then press Listen. The seven channel centers are 162.400, 162.425,
+162.450, 162.475, 162.500, 162.525 and 162.550 MHz
+([National Weather Service](https://www.weather.gov/iln/nwr_faq)).
+Frequencies are labeled explicitly because weather channel numbering varies
+between radio manufacturers.
+
+The NOAA path uses the selected SoapySDR or rtl_tcp device, two-stage channel
+filtering, a 5 kHz-deviation mono FM discriminator, 3 kHz voice filtering and
+44.1 kHz stereo PCM (identical left/right). It bypasses the HD decoder.
+HackRF retains its 8 MS/s capture/resampling path. NOAA uses manual RF gain;
+the FM gain mode is preserved when switching back. Band and weather frequency
+are stored in `/data/web-band.json`, independently of the FM frequency/presets.
+Switching bands while running restarts reception and stops FM recording.
+
+Seek scans only the seven weather channels using narrowband spectrum detection.
+No NOAA recording, HD metadata or RDS is implemented.
+The Traffic & weather tab remains the cached FM HD data
+view; it is separate from NOAA voice broadcasts. Hardware reception and seek
+sensitivity still need validation on the ROSE; CI includes a synthetic NFM
+voice-tone demodulation test and band/API checks.
+
+### County weather alerts (SAME)
+
+In **NOAA Weather** or **Settings**, select a state and county, click **Add county**,
+then **Save alert settings**. You can select up to 20 areas or enter a six-digit
+SAME code manually. County codes are bundled from the
+[NOAA county list](https://www.weather.gov/source/nwr/SameCode.txt) retrieved
+2026-10-30; use manual entry for updated codes absent from that list.
+
+Tune a NOAA channel that covers your county and leave the receiver running.
+The panel shows whether NOAA audio is reaching the decoder; this status does
+not prove that the station's signal is strong enough to decode SAME.
+Changing to FM, stopping reception, or seeking interrupts weather monitoring.
+One SDR cannot monitor NOAA while receiving an FM station.
+
+Matching warnings, watches and other SAME messages produce a banner on every
+workspace tab. Select **Enable alert sound & test** to permit a three-note chime
+in that browser session. The page must stay open and the browser/device awake;
+closed pages receive no notifications. Sound permission resets on reload.
+Playback volume, playback mute and pausing the browser audio do not disable
+decoding or the separate alert chime. Test broadcasts are excluded unless
+**Include test broadcasts** is saved. Settings and dismissals are shared by
+clients and saved in `/data/same-alerts.json`.
+
+The pinned multimon-ng EAS decoder requires two matching headers out of three.
+The service validates timestamps, matches county/subdivision/statewide codes,
+ignores repeated alerts, and retains a bounded history. An end-of-message tone
+ends the spoken message, not the alert's expiration time. SAME supplies an event
+code and affected areas, not full warning text: listen to the broadcast for
+details. Unknown event codes are displayed rather than silently discarded.
+
+The decoder uses a bounded, pre-volume 22.05 kHz mono PCM tap. Retuning or audio
+loss opens a fresh decoder session to avoid combining partial messages from
+different stations. ARM64 builds test synthetic SAME audio for consensus,
+duplicate rejection and end-of-message detection. Container smoke tests exercise
+PCM delivery through the live alert API. Live reception remains unverified on
+the ROSE; keep an established weather-alert source available during validation.
+Decoder source is included in the image's corresponding-source archive.

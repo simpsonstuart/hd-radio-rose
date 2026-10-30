@@ -17,7 +17,7 @@ def request(path, data=None, headers=None):
         return response.read()
 
 
-for path in ("/", "/audio.mp3", "/api/state", "/api/recordings", "/sources.tar.gz"):
+for path in ("/", "/audio.mp3", "/api/state", "/api/recordings", "/api/alerts", "/api/alerts/counties", "/sources.tar.gz"):
     try:
         urllib.request.urlopen(BASE + path, timeout=3)
         raise AssertionError(f"{path} allowed unauthenticated access")
@@ -30,7 +30,6 @@ assert not state['streaming']
 for endpoint in ('spectrum', 'log', 'recordings'):
     assert isinstance(json.loads(request('/api/' + endpoint)), dict)
 for command in [
-    {'type': 'TuneMhz', 'value': 101.1},
     {'type': 'SelectProgram', 'value': 2},
     {'type': 'SetPreset', 'value': [0, {'name': 'CI preset', 'frequency_mhz': 101.1, 'program': 2}]},
     {'type': 'SetShowHd5Hd8', 'value': True},
@@ -39,6 +38,11 @@ for command in [
     assert result['ready'] and 'error' not in result
 assert result['config']['presets'][0]['name'] == 'CI preset'
 assert result['selected'] == 2
+try:
+    request('/api/command', {'type': 'TuneMhz', 'value': 101.1})
+    raise AssertionError('Idle receiver accepted tuning')
+except urllib.error.HTTPError as error:
+    assert error.code == 409
 for command in [{'type': 'SavePreset', 'value': 1000000}, {'type': 'SelectProgram', 'value': 99}]:
     try:
         request('/api/command', command)
@@ -56,4 +60,13 @@ try:
 except urllib.error.HTTPError as error:
     assert error.code == 404
 assert b'title' in request('/api/log.csv').lower()
+weather = json.loads(request('/api/command', {'type':'SelectBand','value':'noaa'}))
+assert weather['band'] == 'noaa' and weather['frequency'] == 162.4
+assert not weather['streaming'] and not weather['synced']
+try:
+    request('/api/command', {'type':'TuneWeather','value':162.55})
+    raise AssertionError('Idle NOAA receiver accepted tuning')
+except urllib.error.HTTPError as error:
+    assert error.code == 409
+assert json.loads(request('/api/command', {'type':'SelectBand','value':'fm'}))['band'] == 'fm'
 print('Native API, auth, settings, presets, CSV and input validation passed')

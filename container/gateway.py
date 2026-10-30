@@ -64,6 +64,7 @@ NUMBERS = {"TuneMhz": (87.9, 107.9, False), "SelectProgram": (0, 7, True),
            "SetSdrRemotePort": (1, 65535, True), "SetSpectrumSmoothingAlpha": (0.1, 1, False),
            "SetRecordingMaxMinutes": (1, 240, True)}
 ENUMS = {"SetGainMode": {"auto", "manual", "hardware_agc"},
+         "SelectBand": {"fm", "noaa"},
          "SetAnalogFallbackMode": {"digital_only", "automatic", "analog_only"},
          "SelectSdrTransport": {"local_soapy", "soapy_remote", "rtl_tcp_remote"},
          "SetRecordingMode": {"off", "on"}}
@@ -79,7 +80,13 @@ def validate_command(command):
         if value is not None:
             raise ValueError("This command has no value")
         return {"type": kind}
-    if kind in BOOLEANS:
+    if kind == "TuneWeather":
+        value = number(value, 162.4, 162.55)
+        khz = round(value * 1000)
+        if abs(value * 1000 - khz) > .0001 or khz not in range(162400, 162551, 25):
+            raise ValueError("Choose one of the seven NOAA weather channels")
+        value = khz / 1000
+    elif kind in BOOLEANS:
         if not isinstance(value, bool):
             raise ValueError("Expected a boolean")
     elif kind in NUMBERS:
@@ -133,7 +140,7 @@ def confined_file(root, value, extensions):
     return path
 
 
-def make_handler(base):
+def make_handler(base, alerts=None):
     class Handler(base):
         def json_response(self, data, status=200):
             body = json.dumps(data, allow_nan=False).encode()
@@ -167,6 +174,10 @@ def make_handler(base):
             if not route.startswith("/api/"):
                 return super().do_GET()
             try:
+                if route == "/api/alerts" and alerts is not None:
+                    return self.json_response(alerts.snapshot())
+                if route == "/api/alerts/counties" and alerts is not None:
+                    return self.json_response(json.loads(Path(__file__).with_name('same-counties.json').read_text()))
                 if route in {"/api/state", "/api/spectrum", "/api/log"}:
                     result = rpc({"op": route.rsplit("/", 1)[1]})
                     return self.json_response(result, 503 if "error" in result else 200)
@@ -199,7 +210,7 @@ def make_handler(base):
 
         def do_POST(self):
             try:
-                if self.path != "/api/command":
+                if self.path not in {"/api/command", "/api/alerts/settings", "/api/alerts/ack"}:
                     return self.send_error(404)
                 origin = self.headers.get("Origin")
                 if self.headers.get("Sec-Fetch-Site") == "cross-site" or (origin and urlsplit(origin).netloc != self.headers.get("Host")):
@@ -210,7 +221,13 @@ def make_handler(base):
                 if not 0 < length <= 8192:
                     return self.json_response({"error": "Invalid request size"}, 413)
                 self.connection.settimeout(5)
-                command = validate_command(json.loads(self.rfile.read(length)))
+                body = json.loads(self.rfile.read(length))
+                if self.path.startswith('/api/alerts/'):
+                    if alerts is None:
+                        return self.json_response({'error':'Alert service unavailable'}, 503)
+                    result = alerts.configure(body) if self.path.endswith('/settings') else alerts.acknowledge(body)
+                    return self.json_response(result)
+                command = validate_command(body)
                 result = rpc({"op": "command", "command": command})
                 self.json_response(result, 409 if "error" in result else 200)
             except (ValueError, TypeError, KeyError) as error:

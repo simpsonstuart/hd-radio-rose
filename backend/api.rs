@@ -2,6 +2,12 @@
 // Appended inside app.rs: serialized mutations use upstream command handlers.
 impl Nrsc5App {
     pub fn web_init(&mut self) -> Result<(), String> {
+        if let Ok(text) = std::fs::read_to_string("/data/web-band.json") {
+            if let Ok(saved) = serde_json::from_str::<serde_json::Value>(&text) {
+                self.wx_band = saved["band"] == "noaa";
+                if let Some(hz) = saved["frequency"].as_f64().and_then(crate::weather::channel_hz) { self.wx_frequency = hz as f64 / 1e6; }
+            }
+        }
         if let Some(error) = &self.audio_player.init_error { return Err(error.clone()); }
         if !self.config.recording_dir.as_deref().is_some_and(|p| {
             let path = std::path::Path::new(p);
@@ -12,6 +18,10 @@ impl Nrsc5App {
     }
 
     pub fn web_save(&mut self) {
+        let saved = serde_json::json!({"band":if self.wx_band {"noaa"} else {"fm"},"frequency":self.wx_frequency});
+        if std::fs::write("/data/web-band.json.tmp", saved.to_string()).is_ok() {
+            let _ = std::fs::rename("/data/web-band.json.tmp", "/data/web-band.json");
+        }
         self.sync_runtime_to_config();
         save_config(&self.config);
         self.play_log.save();
@@ -19,6 +29,7 @@ impl Nrsc5App {
 
     pub fn web_request(&mut self, request: serde_json::Value) -> serde_json::Value {
         use serde_json::json;
+        if let Some(response) = self.weather_command(&request) { return response; }
         match request["op"].as_str().unwrap_or("") {
             "self_test" if std::env::var("NRSC5_SELF_TEST").as_deref() == Ok("1") => {
                 self.handle_nrsc5_event(NrscEvent::StationName("CI TEST FM".into()));
@@ -53,6 +64,7 @@ impl Nrsc5App {
                 Ok(()) => json!({"ok": true}), Err(error) => json!({"error": error.to_string()})
             },
             "shutdown" => {
+                self.wx_session.take();
                 self.stop_recording(false);
                 eframe::App::on_exit(self, None);
                 json!({"ok": true})
@@ -77,7 +89,21 @@ impl Nrsc5App {
                     _ => {},
                 }
                 if self.retune_task.is_some() { return json!({"error": "Retune in progress; retry shortly"}); }
+                if !self.app_state.is_streaming && matches!(&command, UiCommand::TuneMhz(_) | UiCommand::RecallPreset(_)) {
+                    return json!({"error": "Start the receiver before tuning"});
+                }
+                let restart_gain = self.app_state.is_streaming && match &command {
+                    UiCommand::SetGainMode(mode) => *mode != self.config.gain_mode,
+                    UiCommand::SetAgcAmpTargetDbfs(_) => true,
+                    _ => false,
+                };
+                if matches!(&command, UiCommand::SetManualGainTenths(_) | UiCommand::SetSdrGainElement { .. })
+                    && self.config.gain_mode != crate::config::GainMode::Manual {
+                    return json!({"error": "Select Manual gain before changing gain values"});
+                }
+                if restart_gain { self.handle_command(UiCommand::Stop); }
                 self.handle_command(command);
+                if restart_gain { self.handle_command(UiCommand::Start); }
                 self.web_save();
                 self.web_state()
             },
@@ -96,14 +122,17 @@ impl Nrsc5App {
         })).collect();
         let devices: Vec<_> = s.sdr_devices.iter().map(|d| json!({"driver": d.driver,
             "label": d.label, "serial": d.serial, "args": d.args_after_driver()})).collect();
-        let gains: Vec<_> = s.sdr_gain_elements.iter().map(|g| json!({"name": g.name,
+        let live_gains = self.nrsc5.as_ref().map(|n| n.sdr_gain_elements()).unwrap_or_default();
+        let gain_elements = if s.is_streaming { &live_gains } else { &s.sdr_gain_elements };
+        let profile = crate::sdr::profile::lookup(&self.config.sdr.driver);
+        let gains: Vec<_> = gain_elements.iter().map(|g| json!({"name": g.name,
             "min": g.min_db, "max": g.max_db, "step": g.step_db, "value": g.current_db})).collect();
         let art: Vec<_> = s.art_tiles.iter().map(|a| json!({"path": a.path,
             "hash": a.hash.to_string(), "count": a.count, "songs": a.songs, "album": a.album})).collect();
         let weather: Vec<_> = s.weather_frames.iter().map(|f| json!({"path": f.path,
             "time": f.captured_at.to_rfc3339()})).collect();
         let payload: Vec<_> = s.payload_log.iter().map(|p| json!({"time": p.hhmmss, "text": p.text})).collect();
-        json!({
+        let mut state = json!({
             "ready": true, "version": env!("CARGO_PKG_VERSION"),
             "streaming": s.is_streaming, "synced": s.currently_synced,
             "retuning": self.retune_task.is_some(), "status": s.nrsc5_status,
@@ -113,6 +142,9 @@ impl Nrsc5App {
             "mer_lower": s.mer_lower, "mer_upper": s.mer_upper, "ber": s.ber,
             "gain": s.agc_db, "startup_seconds": s.startup_wait_s, "silence_seconds": s.silence_s,
             "config": self.config, "devices": devices, "gains": gains,
+            "primary_gain_element": profile.map(|p| p.agc_element),
+            "primary_gain_min": profile.and_then(|p| p.agc_tenths_table.first()).map(|v| *v as f32 / 10.0),
+            "primary_gain_max": profile.and_then(|p| p.agc_tenths_table.last()).map(|v| *v as f32 / 10.0),
             "antennas": s.sdr_antennas, "active_antenna": s.active_antenna,
             "refreshing": s.sdr_devices_refresh_in_flight, "sdr_present": s.sdr_present,
             "active_gain_mode": s.active_gain_mode, "active_manual_gain": s.active_manual_gain_tenths,
@@ -126,7 +158,9 @@ impl Nrsc5App {
             "traffic": s.traffic_map_path, "traffic_updated": s.traffic_map_last_updated_hhmmss,
             "weather": weather, "weather_updated": s.weather_map_last_updated_hhmmss,
             "payload": payload, "last_event": s.last_event
-        })
+        });
+        self.weather_state(&mut state);
+        state
     }
 }
 

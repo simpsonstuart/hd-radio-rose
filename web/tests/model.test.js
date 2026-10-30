@@ -2,6 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { compile } from '@vue/compiler-dom';
+import SameAlerts from '../alerts.js';
+
+test('SAME banner and county selector template compiles', () => {
+  const errors = [];
+  compile(SameAlerts.template, { onError: e => errors.push(e.message) });
+  assert.deepEqual(errors, []);
+});
 import { tabs, layoutRead, groupPlays, media, recordingUrl, formatFrequency, fmChannel, digitalLocked, hdAvailable, receiverStatus } from '../model.js';
 
 test('FM input accepts channel grid and formats receiver float noise', () => {

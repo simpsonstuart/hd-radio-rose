@@ -111,7 +111,9 @@ def main():
         "-id3v2_version", "0", "-flush_packets", "1", "-f", "mp3", "pipe:1",
     ], stdout=subprocess.PIPE)
     from gateway import make_handler
-    server = ThreadingHTTPServer(("127.0.0.1", 8090), make_handler(Handler))
+    from same_alerts import service
+    service.start()
+    server = ThreadingHTTPServer(("127.0.0.1", 8090), make_handler(Handler, service))
     server.daemon_threads = True
 
     def encode():
@@ -130,6 +132,7 @@ def main():
     try:
         server.serve_forever()
     finally:
+        service.stop()
         server.server_close()
         process.terminate()
         try:

@@ -23,6 +23,9 @@ for attempt in $(seq 1 90); do
 done
 test "$ready" = true
 python3 scripts/smoke-http.py
+docker cp scripts/test-same-decoder.py "$name":/tmp/test-same-decoder.py
+docker cp scripts/smoke-same.py "$name":/tmp/smoke-same.py
+docker exec "$name" python3 /tmp/smoke-same.py
 # No desktop server or sound daemon is installed in the runtime.
 docker exec "$name" sh -c 'if command -v Xvfb || command -v x11vnc || command -v pulseaudio; then exit 1; fi'
 docker exec "$name" sh -ec 'SoapySDRUtil --info > /tmp/soapy.txt 2>&1; cat /tmp/soapy.txt; grep -i rtlsdr /tmp/soapy.txt; grep -i hackrf /tmp/soapy.txt'
@@ -41,6 +44,7 @@ sleep 5
 for attempt in $(seq 1 45); do
     if curl -fsS http://127.0.0.1:18080/healthz; then
         docker exec "$name" python3 -c 'from gateway import rpc; s=rpc({"op":"state"}); assert s["config"]["presets"][0]["name"]=="CI preset"; assert s["config"]["show_hd5_hd8"]'
+        docker exec "$name" python3 -c 'import json, urllib.request; s=json.load(urllib.request.urlopen("http://127.0.0.1:8090/api/alerts")); assert s["settings"]["counties"]==["053077"]; assert not s["active"]'
         exit 0
     fi
     sleep 2

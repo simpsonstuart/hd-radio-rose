@@ -15,6 +15,7 @@ mod recorder;
 mod sdr;
 mod sdr_detect;
 mod station_info;
+mod weather;
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
