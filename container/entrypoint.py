@@ -52,7 +52,7 @@ def authentication():
         os.chmod("/run/rose/htpasswd", 0o640)
         import grp
         os.chown("/run/rose/htpasswd", 0, grp.getgrnam("www-data").gr_gid)
-        Path("/run/rose/auth.conf").write_text('auth_basic "ROSE Radio";\nauth_basic_user_file /run/rose/htpasswd;\n')
+        Path("/run/rose/auth.conf").write_text('auth_basic "DX Studio";\nauth_basic_user_file /run/rose/htpasswd;\n')
     elif os.environ.get("ALLOW_ANONYMOUS", "false").lower() == "true":
         print("Anonymous access enabled: use only on a trusted LAN or VPN", flush=True)
         Path("/run/rose/auth.conf").write_text("auth_basic off;\n")

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-image=${1:-hd-radio-rose:test}
+image=${1:-dx-studio:test}
 name=rose-smoke
 cleanup() {
     docker logs "$name" || true
@@ -40,7 +40,7 @@ docker exec "$name" ffmpeg -hide_banner -loglevel info \
 cat /tmp/rose-audio-test.log
 python3 -c 'import re; text=open("/tmp/rose-audio-test.log").read(); match=re.search(r"max_volume: (-?[\d.]+) dB", text); assert match and float(match[1]) > -50, text'
 # Validate corresponding source archive exists and is readable.
-docker exec "$name" sh -c 'tar -tzf /usr/share/doc/hd-radio-rose/sources.tar.gz >/dev/null'
+docker exec "$name" sh -c 'tar -tzf /usr/share/doc/dx-studio/sources.tar.gz >/dev/null'
 # Restart and ensure persisted API settings survive graceful shutdown.
 docker restart -t 25 "$name"
 sleep 5

@@ -23,7 +23,7 @@ for path in ("/", "/audio.mp3", "/api/state", "/api/recordings", "/api/alerts", 
         raise AssertionError(f"{path} allowed unauthenticated access")
     except urllib.error.HTTPError as error:
         assert error.code == 401, (path, error.code)
-assert b'ROSE Radio' in request('/')
+assert b'DX Studio' in request('/')
 state = json.loads(request('/api/state'))
 assert state['ready'] and len(state['programs']) == 8
 assert not state['streaming']

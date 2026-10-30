@@ -70,13 +70,13 @@ RUN mkdir -p /sources/studio/.cargo /sources/nrsc5 /sources/faad2 \
     && cp -a /build/nrsc5/faad2-prefix/src/faad2_external/. /sources/faad2/ \
     && rm -rf /sources/nrsc5/.git /sources/faad2/.git \
     && printf 'STUDIO_REF=%s\nNRSC5_REF=%s\nMULTIMON_REF=%s\n' "$STUDIO_REF" "$NRSC5_REF" "$MULTIMON_REF" > /sources/versions.txt
-COPY Dockerfile README.md LICENSE compose.yaml /sources/hd-radio-rose/
-COPY container/ /sources/hd-radio-rose/container/
-COPY scripts/ /sources/hd-radio-rose/scripts/
-COPY web/ /sources/hd-radio-rose/web/
-COPY backend/ /sources/hd-radio-rose/backend/
-COPY tests/ /sources/hd-radio-rose/tests/
-COPY .github/ /sources/hd-radio-rose/.github/
+COPY Dockerfile README.md LICENSE compose.yaml /sources/dx-studio/
+COPY container/ /sources/dx-studio/container/
+COPY scripts/ /sources/dx-studio/scripts/
+COPY web/ /sources/dx-studio/web/
+COPY backend/ /sources/dx-studio/backend/
+COPY tests/ /sources/dx-studio/tests/
+COPY .github/ /sources/dx-studio/.github/
 RUN tar -czf /sources.tar.gz -C /sources .
 
 FROM scratch AS source-export
@@ -99,8 +99,8 @@ COPY --from=build /src/studio/res/map.png /usr/share/nrsc5-studio/map.png
 COPY --from=build /src/studio/LICENSE /src/studio/COPYING.GPL-3.0 /src/studio/THIRD_PARTY_NOTICES.md /usr/share/doc/nrsc5-studio/
 COPY container/ /opt/rose/
 COPY --from=frontend /web/dist/ /var/www/rose/
-COPY README.md LICENSE /usr/share/doc/hd-radio-rose/
-COPY --from=build /sources.tar.gz /usr/share/doc/hd-radio-rose/sources.tar.gz
+COPY README.md LICENSE /usr/share/doc/dx-studio/
+COPY --from=build /sources.tar.gz /usr/share/doc/dx-studio/sources.tar.gz
 RUN touch /opt/nrsc5-studio/portable.txt \
     && ln -s /data /opt/nrsc5-studio/data \
     && mkdir -p /data /run/rose \

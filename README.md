@@ -1,8 +1,15 @@
-# ROSE Radio — native web HD Radio receiver
+# DX Studio — radio, television and DX workspace
 
-A headless adaptation of [NRSC5 Studio](https://github.com/LTCAshraven/nrsc5-studio)
-for MikroTik ROSE ARM64, with a new Vue interface. Target deployment: **RouterOS
-7.25**, RTL-SDR or HackRF assigned through the container's USB device settings.
+A native web workspace for multiple radio and television sources, with SDR
+reception powered by a headless adaptation of
+[NRSC5 Studio](https://github.com/LTCAshraven/nrsc5-studio) and network television
+through HDHomeRun. DX Studio brings listening, viewing and DX tools into one
+Vue interface.
+
+The current container build targets **Linux ARM64**, with MikroTik ROSE on
+**RouterOS 7.25** as the initial deployment platform. RTL-SDR or HackRF devices
+are assigned through the container's USB device settings. Support for additional
+host platforms can grow independently of the DX Studio name.
 
 The browser sends API commands to the receiver and renders metadata, artwork,
 charts and maps itself. The container runs **no X server, VNC server, desktop,
@@ -62,7 +69,7 @@ that status. Each receiver session is shared by signed-in users; separate source
 ## GitHub Actions: build on push
 
 1. Push this repository to GitHub. No fork or edits to the upstream repo are needed.
-2. Open **Actions → Build and publish ROSE ARM64 image**. Every push, PR and manual
+2. Open **Actions → Build and publish DX Studio ARM64 image**. Every push, PR and manual
    dispatch builds on `ubuntu-24.04-arm`. Your account must support that runner.
 3. Successful push builds publish **`ghcr.io/OWNER/REPOSITORY:latest`** on the
    default branch. Other branches and Git tags get their own tags; every published
@@ -71,7 +78,7 @@ that status. Each receiver session is shared by signed-in users; separate source
    Packages may initially be private. The workflow uses `GITHUB_TOKEN` with
    `packages: write`; no extra registry secret is required unless organization
    policies prevent package publishing.
-5. A Docker-save **`hd-radio-rose-arm64.tar.gz`** is also uploaded as a workflow
+5. A Docker-save **`dx-studio-arm64.tar.gz`** is also uploaded as a workflow
    artifact, retained for 14 days. Unzip the artifact download before importing the
    contained `.tar.gz` into RouterOS. GHCR images remain until removed.
 
@@ -95,8 +102,8 @@ edition may describe a newer RouterOS version, so use the fields offered by 7.25
 2. Create a dedicated **veth** with an unused IP and gateway on your container
    network. Add it to the appropriate bridge. Allow your trusted LAN/VPN to reach
    the container's IP on TCP **8080**, using your existing routing/NAT arrangement.
-3. Use a fresh disk-backed root directory, e.g. `disk1/containers/hd-radio-rose`,
-   and a separate persistent folder, e.g. `disk1/appdata/hd-radio-rose`. Substitute
+3. Use a fresh disk-backed root directory, e.g. `disk1/containers/dx-studio`,
+   and a separate persistent folder, e.g. `disk1/appdata/dx-studio`. Substitute
    your actual disk name. Allow several GB for extraction and source archives.
 4. In **Containers → Mounts**, map the persistent folder to **`/data`**, then attach
    that mount/list to the container. Keep it separate from the disposable root.
@@ -228,8 +235,8 @@ For an actual Linux ARM64 Docker host:
 cp .env.example .env  # edit your password
 docker compose up --build -d
 # Or run the complete hardware-independent container smoke test:
-docker buildx build --platform linux/arm64 --load -t hd-radio-rose:test .
-bash scripts/smoke-test.sh hd-radio-rose:test
+docker buildx build --platform linux/arm64 --load -t dx-studio:test .
+bash scripts/smoke-test.sh dx-studio:test
 ```
 
 Compose maps the USB bus with character-device permissions without privileged
@@ -623,7 +630,7 @@ Rebuild the container to install the new control dependency before using DX feat
 The Spectrum tab plots decoder samples after equalization and before symbol
 slicing, rather than synthesizing dots from MER. This implements the idea in
 [Studio issue 2](https://github.com/LTCAshraven/nrsc5-studio/issues/2) using a
-ROSE-local libnrsc5 extension; it is not the proposed upstream API from
+DX Studio-specific libnrsc5 extension; it is not the proposed upstream API from
 [nrsc5 issue 507](https://github.com/theori-io/nrsc5/issues/507).
 
 - FM: QPSK data carriers from all active partitions, with reference carriers
