@@ -1,8 +1,10 @@
 import {ref,computed,watch,onUnmounted,nextTick} from 'vue';
 import Hls from 'hls.js';
+import AtscDx from './atsc-dx.js';
 import {receiverUrl} from './model.js';
 
 export default {
+  components: {AtscDx},
   props: {state:Object, connected:Boolean},
   emits: ['update-state'],
   setup(props,{emit}) {
@@ -76,6 +78,7 @@ export default {
       <div class="table-wrap"><table><thead><tr><th>Channel</th><th>Station</th><th>Video</th><th>Audio</th><th>Availability</th></tr></thead><tbody><tr v-for="c in filtered" :key="c.number"><td>{{c.number}}</td><td>{{c.name}}</td><td>{{c.video_codec||'Not reported'}}</td><td>{{c.audio_codec||'Not reported'}}</td><td>{{c.unavailable_reason||'Try playback'}}</td></tr></tbody></table></div>
     </details>
     <details v-if="state?.diagnostics?.length"><summary>Playback diagnostics</summary><pre>{{state.diagnostics.join('\n')}}</pre></details>
-    <p class="muted">Browser playback transcodes to H.264/AAC, up to 720p30, using server CPU. Protected channels and AC-4 audio are not supported. Lineup data is device-reported; RF scanning, signal measurements and ATSC DX logging are not implemented yet.</p>
-  </section>`
+    <p class="muted">Browser playback transcodes to H.264/AAC, up to 720p30, using server CPU. Protected channels and AC-4 audio are not supported. Lineup data is device-reported; RF diagnostics and scans are available below.</p>
+  </section>
+  <AtscDx :dx="state?.dx" :connected="connected" :busy="busy" :playing="!!state?.playback?.running" @command="command" />`
 };

@@ -29,6 +29,7 @@ def worker_environment(root, runtime, receiver, source):
     env.pop('ROSE_TV_BINDING', None)
     if source['kind'] == 'hdhomerun':
         env['ROSE_TV_BINDING'] = json.dumps(source['connection'])
+        env['ROSE_SOURCE_METADATA'] = json.dumps({key:source.get(key,'') for key in ('id','name','location','antenna','purpose')})
     if (value := binding(source)) is not None:
         env['ROSE_SDR_BINDING'] = json.dumps(value)
     return env
@@ -115,6 +116,7 @@ class Supervisor:
                 worker['status'] = 'running'
         except Exception as error:
             with self.lock:
+                if worker['status'] in {'stopping','stopped'}: return
                 worker['error'] = str(error)
                 self._terminate(worker)
                 worker['status'] = 'failed'
@@ -127,7 +129,7 @@ class Supervisor:
                 os.killpg(process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + (30 if 'ROSE_TV_BINDING' in worker.get('env', {}) else 5)
         for process in reversed(processes):
             try:
                 process.wait(timeout=max(.01, deadline-time.monotonic()))
@@ -155,8 +157,9 @@ class Supervisor:
                 call(int(worker['env']['ROSE_RPC_PORT']), {'op':'shutdown'}, timeout=8)
         except (OSError, ValueError, RuntimeError):
             pass
+        # A slow tuner release must not hold the registry lock or serialize shutdowns.
+        self._terminate(worker)
         with self.lock:
-            self._terminate(worker)
             worker['status'] = 'stopped'
 
     def put_source(self, body):
@@ -195,7 +198,7 @@ class Supervisor:
         self.closing.set()
         threads = [threading.Thread(target=self.stop, args=(rid,False)) for rid in list(self.workers)]
         for thread in threads: thread.start()
-        for thread in threads: thread.join(timeout=16)
+        for thread in threads: thread.join(timeout=32)
 
 
 def route(path):

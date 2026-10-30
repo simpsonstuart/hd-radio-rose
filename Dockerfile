@@ -79,7 +79,7 @@ FROM debian:bookworm-slim AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates python3 nginx-light openssl \
-    ffmpeg libasound2 libdbus-1-3 \
+    ffmpeg hdhomerun-config libasound2 libdbus-1-3 \
     libxkbcommon0 libwayland-client0 libx11-6 libx11-xcb1 libxcb1 \
     libsoapysdr0.8 soapysdr-tools soapysdr0.8-module-rtlsdr \
     soapysdr0.8-module-hackrf soapysdr0.8-module-remote \

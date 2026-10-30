@@ -14,7 +14,7 @@ services:
       - /dev/bus/usb:/dev/bus/usb
     device_cgroup_rules:
       - "c 189:* rmw"
-    stop_grace_period: 25s
+    stop_grace_period: 45s
     restart: unless-stopped
 volumes:
   radio-data:

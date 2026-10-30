@@ -1,7 +1,7 @@
 """HDHomeRun provider: fixed-tuner HTTP input and bounded browser HLS output.
 
 The radio DSP never handles TV. Device metadata and lineup remain provider data,
-leaving RF scanning, signal measurements and DX observations for later adapters.
+with RF measurements, scanning and observations isolated in the DX adapter.
 """
 from collections import deque
 import http.client
@@ -12,14 +12,16 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import threading
 import time
 from urllib.parse import urlsplit
 import uuid
 
-from runtime import RUN, port, discard_rejected_body
+from runtime import DATA, RUN, port, discard_rejected_body
 from sources import connection
+from atsc_dx import DX
 
 CHANNEL = re.compile(r'[0-9]{1,5}(?:\.[0-9]{1,3})?\Z')
 DEVICE_FIELDS = ('FriendlyName','ModelNumber','FirmwareName','FirmwareVersion','DeviceID','TunerCount')
@@ -103,9 +105,10 @@ def encoder_args(directory):
 
 
 class Television:
-    def __init__(self, config, runtime=RUN, device=None):
+    def __init__(self, config, runtime=RUN, device=None, dx=None):
         self.device = device or Device(config)
         self.config = config
+        self.dx = dx
         self.root = Path(runtime)/'tv-hls'
         self.root.mkdir(parents=True,exist_ok=True)
         # Only this provider's generated segments; never touch persistent recordings.
@@ -140,13 +143,14 @@ class Television:
                     'tuner':self.config['tuner'], 'channel':self.selected,
                     'playback':{'running':live,'ready':ready,'generation':self.generation,
                                 'url':f'/tv/hls/{self.generation}/index.m3u8' if ready else None},
-                    'diagnostics':list(self.logs)}
+                    'diagnostics':list(self.logs), 'dx':self.dx.snapshot() if self.dx else None}
 
     def play(self, number):
         if not isinstance(number,str) or not CHANNEL.fullmatch(number): raise ValueError('Choose a channel from the lineup')
         # Recheck identity and lineup before every new tune, even if cached metadata exists.
         self.refresh()
         with self.lock:
+            if self.dx and self.dx.busy: raise ValueError('Finish or cancel the RF scan and release its tuner before playback')
             row = next((r for r in self.channels if r['number'] == number),None)
             if row is None: raise ValueError('Channel is not in the device lineup; refresh the lineup')
             if row['unavailable_reason']: raise ValueError(row['unavailable_reason'])
@@ -183,6 +187,11 @@ class Television:
             threading.Thread(target=feed,daemon=True).start()
             threading.Thread(target=logs,daemon=True).start()
             return self.snapshot()
+
+    def start_scan(self, body):
+        with self.lock:
+            if self.process: raise ValueError('Stop the TV stream before starting an RF scan')
+            self.dx.start(body.get('first',2), body.get('last',36), body.get('dwell',4))
 
     def stop(self):
         with self.lock:
@@ -238,14 +247,26 @@ def make_handler(tv):
                 path=urlsplit(self.path).path
                 if path == '/healthz': return self.json_response({'ready':not tv.closed.is_set()})
                 if path == '/api/state': return self.json_response(tv.snapshot())
+                if path == '/api/tv/receptions' and tv.dx:
+                    from urllib.parse import parse_qs
+                    query = parse_qs(urlsplit(self.path).query)
+                    try:
+                        before = int(query['before'][0]) if 'before' in query else None
+                        if before is not None and not 0 < before <= 9223372036854775807: raise ValueError()
+                    except ValueError: return self.json_response({'error':'Invalid log cursor'},400)
+                    return self.json_response({'entries':tv.dx.log.rows(before)})
+                if path == '/api/tv/receptions.json' and tv.dx:
+                    return self.json_response({'entries':tv.dx.log.rows(limit=10000)})
                 data, mime = tv.media(path)
                 self.send_response(200); self.send_header('Content-Type',mime)
                 self.send_header('Content-Length',str(len(data))); self.send_header('Cache-Control','no-store')
                 self.end_headers(); self.wfile.write(data)
             except FileNotFoundError: self.json_response({'error':'Video segment unavailable'},404)
             except (BrokenPipeError,ConnectionResetError): self.close_connection=True
+            except (OSError,sqlite3.Error) as error: self.json_response({'error':str(error)},503)
         def do_POST(self):
             try:
+                if tv.closed.is_set(): return self.json_response({'error':'Receiver is stopping'},503)
                 origin=self.headers.get('Origin')
                 if self.headers.get('Sec-Fetch-Site') == 'cross-site' or (origin and urlsplit(origin).netloc != self.headers.get('Host')):
                     return self.json_response({'error':'Cross-origin command denied'},403)
@@ -259,10 +280,14 @@ def make_handler(tv):
                 if self.path == '/api/tv/play': tv.play(body.get('channel'))
                 elif self.path == '/api/tv/stop': tv.stop()
                 elif self.path == '/api/tv/refresh': tv.refresh()
+                elif self.path == '/api/tv/scan' and tv.dx: tv.start_scan(body)
+                elif self.path == '/api/tv/scan-cancel' and tv.dx: tv.dx.cancel.set()
+                elif self.path == '/api/tv/scan-release' and tv.dx: tv.dx.retry_release()
+                elif self.path == '/api/tv/log' and tv.dx: tv.dx.manual(body.get('notes',''))
                 else: return self.json_response({'error':'Unknown TV command'},404)
                 self.json_response(tv.snapshot())
             except (ValueError,TypeError) as error: self.json_response({'error':str(error)},400)
-            except (OSError,RuntimeError,http.client.HTTPException) as error: self.json_response({'error':str(error)},503)
+            except (OSError,RuntimeError,sqlite3.Error,http.client.HTTPException) as error: self.json_response({'error':str(error)},503)
         def log_message(self,*args): pass
     return Handler
 
@@ -270,14 +295,21 @@ def make_handler(tv):
 def main():
     config=connection(json.loads(os.environ['ROSE_TV_BINDING']),kind='hdhomerun')
     tv=Television(config)
+    tv.dx=DX(tv.device,config,json.loads(os.environ.get('ROSE_SOURCE_METADATA','{}')),DATA/'receptions.sqlite3')
+    def measurements():
+        while not tv.closed.is_set():
+            tv.dx.poll()
+            tv.closed.wait(5)
+    threading.Thread(target=measurements,daemon=True).start()
     server=ThreadingHTTPServer(('127.0.0.1',port('HTTP',8090)),make_handler(tv)); server.daemon_threads=True
     def stop(_signum,_frame):
         tv.closed.set()
+        tv.dx.cancel.set()
         threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM,stop); signal.signal(signal.SIGINT,stop)
     threading.Thread(target=tv.monitor,daemon=True).start()
     try: server.serve_forever()
-    finally: tv.closed.set(); server.server_close(); tv.stop()
+    finally: tv.closed.set(); server.server_close(); tv.stop(); tv.dx.close()
 
 
 if __name__ == '__main__': main()

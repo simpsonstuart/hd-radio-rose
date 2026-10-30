@@ -535,10 +535,56 @@ workspace. This is not a claim of complete ATSC 3.0 playback support.
 
 The TV state separates device identity/model/firmware/tuner count, channel lineup,
 reported codecs and availability, lineup refresh time, and playback diagnostics.
-These are the starting points for future ATSC DX features. They are **not** RF
-signal measurements or confirmed reception logs: RF scanning, strength/quality,
-physical-channel mappings, transport/program inspection and persistent DX
-observations remain future work.
+The ATSC reception panel adds live RF measurements, cancellable scans, and a
+persistent reception history. Configure **antenna** and **location** in Sources
+before starting the session; those labels are copied into every observation.
+
+### ATSC DX workflow
+
+1. Start an HDHomeRun source and watch a channel. The DX panel polls the assigned
+   tuner about every five seconds (plus device response time), showing strength,
+   signal quality, symbol quality, lock/modulation, physical RF/frequency, bitrate,
+   and tuner-reported service/transport information. Unknown values remain unknown;
+   the timestamp identifies the last measurement. Percentages are the device's
+   `ss`, `snq`, and `seq`, not calibrated dBm or SNR in dB.
+2. Use **Log current reception** to take a fresh locked measurement with notes,
+   such as antenna heading or propagation conditions. Manual logging requires a
+   reported lock; a lineup entry alone is not evidence of reception.
+3. For a scan, stop this source's TV stream, expand **Scan physical RF channels**,
+   select an inclusive RF range within **2–36**, and choose **2–15 seconds** dwell.
+   This version uses the US/Canada broadcast frequency plan and requires the device
+   to report `us-bcast`. It does not change the device's persistent channel map or
+   lineup. Tuning uses automatic modulation detection; ATSC 3.0 diagnostics and
+   service discovery remain dependent on hardware/firmware, with no promise of
+   complete ATSC 3.0 support.
+4. The scan acquires an authenticated lock on this source's tuner, refuses an
+   external stream/lock, reports progress, and can be cancelled. Playback is blocked
+   until scanning and tuner release finish. Other source sessions keep running.
+   Each completed dwell is stored, including explicitly marked **no confirmed lock**
+   attempts. Cancelled, incomplete dwells are not represented as observations.
+5. Browse history or **Export retained history (JSON)**. Each entry contains UTC
+   time, source ID/name, antenna/location, device ID/tuner, RF/frequency, all three
+   metrics, raw tuner status/service information, scan ID or manual origin, and
+   notes. The newest **10,000 observations per receiver** survive restarts in
+   `receptions.sqlite3` in that receiver's data directory. Existing observations keep
+   their original labels when a source is edited. Export periodically for longer
+   archives. RF is physical; reported virtual channels are separate service data.
+
+A scan ends by clearing its tuned channel and releasing only its own lock; it does
+not automatically resume TV. If release fails, **Retry tuner release** is available
+and new playback/scans remain blocked. A small `receptions.lock.json` ownership
+journal permits retry after a worker restart; it contains no device authentication
+secret. If the source's device/tuner was changed while recovery is pending, restore
+that binding first. The platform never force-unlocks another application's tuner.
+Normal container shutdown allows time for scan cancellation and release.
+
+Control uses the distribution's `hdhomerun-config` command against the configured
+host and tuner, with bounded command timeouts. The server needs access to the
+HDHomeRun's control service (TCP 65001) as well as its existing HTTP services.
+See [SiliconDust's control documentation](https://info.hdhomerun.com/info/hdhomerun_config).
+A momentary lock is not proof of sustained watchability, station identity, or a DX
+record; review service information and your notes. Slow service discovery can
+require a longer dwell or another scan.
 
 | Receiver-scoped endpoint | Purpose |
 | --- | --- |
@@ -546,6 +592,12 @@ observations remain future work.
 | `POST /api/receivers/ID/api/tv/refresh` | Refresh device/lineup, body `{}` |
 | `POST /api/receivers/ID/api/tv/play` | Start/join channel, e.g. `{"channel":"5.1"}` |
 | `POST /api/receivers/ID/api/tv/stop` | Stop the shared stream, body `{}` |
+| `POST /api/receivers/ID/api/tv/scan` | Start RF scan, e.g. `{"first":2,"last":36,"dwell":4}` |
+| `POST /api/receivers/ID/api/tv/scan-cancel` | Cancel current scan, body `{}` |
+| `POST /api/receivers/ID/api/tv/scan-release` | Retry failed tuner release, body `{}` |
+| `POST /api/receivers/ID/api/tv/log` | Fresh reception, e.g. `{"notes":"Yagi north"}` |
+| `GET /api/receivers/ID/api/tv/receptions?before=ID` | Newest-first history, 100 per page; cursor optional |
+| `GET /api/receivers/ID/api/tv/receptions.json` | Export retained history with original source/antenna labels |
 | `GET /api/receivers/ID/tv/hls/TOKEN/index.m3u8` | Current stream playlist; use the state’s playback URL |
 
 TV uses a separate Python provider worker, never the NRSC5/NOAA engine. The
@@ -558,3 +610,9 @@ checks the generated codecs. **Actual HDHomeRun reception, browser video playbac
 ARM64 transcoding and the synthetic media smoke test have not run locally**:
 this Windows workspace has no HDHomeRun or FFmpeg installation. Validate the
 container build and one TV stream on your ROSE before increasing concurrency.
+
+DX tests additionally cover RF frequency boundaries, unknown metrics, source context,
+exclusive tuning, cancellation, lock conflicts, durable logs and release recovery.
+Live signal readings, RF scans, and tuner locking still require validation on a
+physical HDHomeRun; no such hardware is attached to this development workspace.
+Rebuild the container to install the new control dependency before using DX features.

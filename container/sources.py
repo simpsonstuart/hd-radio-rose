@@ -12,7 +12,7 @@ import threading
 
 CAPABILITIES = {
     'sdr': ['fm', 'am', 'noaa', 'hd-radio', 'spectrum', 'digital-recording', 'same'],
-    'hdhomerun': ['tv', 'channel-lineup', 'live-video', 'device-info'],
+    'hdhomerun': ['tv', 'channel-lineup', 'live-video', 'device-info', 'rf-signal', 'rf-scan', 'reception-log'],
 }
 MAX_RECEIVERS = 8
 

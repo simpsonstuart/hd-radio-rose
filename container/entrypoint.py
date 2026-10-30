@@ -88,7 +88,7 @@ def cleanup():
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
-    deadline = time.monotonic() + 20
+    deadline = time.monotonic() + 40
     for _, process in reversed(SERVICES):
         try:
             process.wait(timeout=max(0.01, deadline - time.monotonic()))
