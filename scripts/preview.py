@@ -47,6 +47,9 @@ class Preview(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path == '/api/sources': return self.respond({'sources':[{'id':'default','name':'Fixture receiver','connection':{'transport':'legacy'}}], 'receivers':[{'id':'default','source_id':'default','status':'running'}]})
+        if path == '/api/alerts': return self.respond({'active':[], 'history':[], 'settings':{'counties':[], 'include_tests':False}, 'monitoring':False})
+        if path == '/api/alerts/counties': return self.respond([])
         if path == '/api/state': return self.respond(STATE)
         if path == '/api/spectrum': return self.respond({"bins": [], "generation": 0})
         if path == '/api/log': return self.respond({"entries": []})

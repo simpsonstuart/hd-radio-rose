@@ -1,5 +1,6 @@
 """One MP3 encoder shared by bounded live listeners; no audio files accumulate."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from runtime import RUN, port
 import os
 from pathlib import Path
 import queue
@@ -55,8 +56,8 @@ BROADCAST = Broadcast()
 
 def app_alive():
     try:
-        os.kill(int(Path("/run/rose/app.pid").read_text()), 0)
-        return time.time() - Path("/run/rose/heartbeat").stat().st_mtime < 15
+        os.kill(int((RUN / "app.pid").read_text()), 0)
+        return time.time() - (RUN / "heartbeat").stat().st_mtime < 15
     except (OSError, ValueError):
         return False
 
@@ -106,14 +107,14 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     process = subprocess.Popen([
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin",
-        "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "tcp://127.0.0.1:8092",
+        "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", f"tcp://127.0.0.1:{port('PCM', 8092)}",
         "-c:a", "libmp3lame", "-b:a", "160k", "-write_xing", "0",
         "-id3v2_version", "0", "-flush_packets", "1", "-f", "mp3", "pipe:1",
     ], stdout=subprocess.PIPE)
     from gateway import make_handler
     from same_alerts import service
     service.start()
-    server = ThreadingHTTPServer(("127.0.0.1", 8090), make_handler(Handler, service))
+    server = ThreadingHTTPServer(("127.0.0.1", port("HTTP", 8090)), make_handler(Handler, service))
     server.daemon_threads = True
 
     def encode():

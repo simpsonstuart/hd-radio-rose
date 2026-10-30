@@ -8,7 +8,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlsplit
 
-DATA = Path("/data")
+from runtime import DATA, port, discard_rejected_body
 RPC_LOCK = threading.Lock()
 
 
@@ -18,7 +18,7 @@ def rpc(request, timeout=35):
     if not RPC_LOCK.acquire(timeout=min(timeout, 1)):
         raise RuntimeError("Receiver busy with another request; retry shortly")
     try:
-        with socket.create_connection(("127.0.0.1", 8091), timeout=max(.001, deadline - time.monotonic())) as client:
+        with socket.create_connection(("127.0.0.1", port("RPC", 8091)), timeout=max(.001, deadline - time.monotonic())) as client:
             client.settimeout(max(.001, deadline - time.monotonic()))
             client.sendall(json.dumps(request, allow_nan=False).encode() + b"\n")
             with client.makefile("rb") as stream:
@@ -54,7 +54,7 @@ def fm_channel(value):
 
 UNITS = {"Start", "Stop", "RefreshSdrDevices", "ResetSdrConfig", "ClearGainCache",
          "StartRecording", "StopRecording", "ClearCollage", "ClearArtBlocklist", "ClearLog"}
-BOOLEANS = {"SetShowHd5Hd8", "SetMute", "SetAnalogFallbackStereo", "SetAnalogFallbackRdsEnabled",
+BOOLEANS = {"SetAmConverter", "SetShowHd5Hd8", "SetMute", "SetAnalogFallbackStereo", "SetAnalogFallbackRdsEnabled",
             "SetSpectrumSmoothingEnabled", "SetRecordingSubfolderPerStation", "SetCollageSecondaryClickFallback"}
 NUMBERS = {"TuneMhz": (87.9, 107.9, False), "SelectProgram": (0, 7, True),
            "SavePreset": (0, 47, True), "RecallPreset": (0, 47, True), "ClearPreset": (0, 47, True),
@@ -64,7 +64,7 @@ NUMBERS = {"TuneMhz": (87.9, 107.9, False), "SelectProgram": (0, 7, True),
            "SetSdrRemotePort": (1, 65535, True), "SetSpectrumSmoothingAlpha": (0.1, 1, False),
            "SetRecordingMaxMinutes": (1, 240, True)}
 ENUMS = {"SetGainMode": {"auto", "manual", "hardware_agc"},
-         "SelectBand": {"fm", "noaa"},
+         "SelectBand": {"fm", "noaa", "am"},
          "SetAnalogFallbackMode": {"digital_only", "automatic", "analog_only"},
          "SelectSdrTransport": {"local_soapy", "soapy_remote", "rtl_tcp_remote"},
          "SetRecordingMode": {"off", "on"}}
@@ -80,7 +80,11 @@ def validate_command(command):
         if value is not None:
             raise ValueError("This command has no value")
         return {"type": kind}
-    if kind == "TuneWeather":
+    if kind == "TuneAm":
+        value = number(value, 530, 1700, True)
+        if value % 10:
+            raise ValueError("Choose 530–1700 kHz in 10 kHz steps")
+    elif kind == "TuneWeather":
         value = number(value, 162.4, 162.55)
         khz = round(value * 1000)
         if abs(value * 1000 - khz) > .0001 or khz not in range(162400, 162551, 25):
@@ -104,7 +108,7 @@ def validate_command(command):
         base = (DATA / 'recordings').resolve()
         path = (base / string(value)).resolve()
         if not path.is_relative_to(base):
-            raise ValueError("Recording folder must stay inside /data/recordings")
+            raise ValueError("Recording folder must stay inside this receiver’s recordings directory")
         value = str(path)
     elif kind == "BlockCover":
         if not isinstance(value, str) or not value.isdecimal() or len(value) > 20:
@@ -143,6 +147,7 @@ def confined_file(root, value, extensions):
 def make_handler(base, alerts=None):
     class Handler(base):
         def json_response(self, data, status=200):
+            if status >= 400: discard_rejected_body(self)
             body = json.dumps(data, allow_nan=False).encode()
             try:
                 self.send_response(status)
@@ -197,7 +202,10 @@ def make_handler(base, alerts=None):
                     return self.json_response({"files": sorted(files, key=lambda f: f["modified"], reverse=True)[:1000]})
                 query = parse_qs(parsed.query)
                 if route == "/api/media":
-                    return self.file_response(confined_file(DATA, query.get("path", [""])[0], {".png", ".jpg", ".jpeg", ".gif"}))
+                    path = confined_file(DATA, query.get("path", [""])[0], {".png", ".jpg", ".jpeg", ".gif"})
+                    if path.is_relative_to((DATA / "receivers").resolve()):
+                        raise ValueError("Another receiver's media")
+                    return self.file_response(path)
                 if route == "/api/recording":
                     return self.file_response(confined_file(DATA / "recordings", query.get("name", [""])[0], {".opus"}), True)
                 self.send_error(404)
@@ -221,7 +229,9 @@ def make_handler(base, alerts=None):
                 if not 0 < length <= 8192:
                     return self.json_response({"error": "Invalid request size"}, 413)
                 self.connection.settimeout(5)
-                body = json.loads(self.rfile.read(length))
+                payload = self.rfile.read(length)
+                self._body_consumed = True
+                body = json.loads(payload)
                 if self.path.startswith('/api/alerts/'):
                     if alerts is None:
                         return self.json_response({'error':'Alert service unavailable'}, 503)

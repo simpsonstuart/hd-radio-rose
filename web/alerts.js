@@ -1,8 +1,9 @@
+import {receiverUrl, selectedReceiver} from './model.js';
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 
 export default {
-  props: { showSettings: Boolean },
-  setup() {
+  props: { showSettings: Boolean, receiverId: {type:String,default:selectedReceiver}, sourceName: String },
+  setup(props) {
     const data = ref(null), counties = ref([]), stateCode = ref(''), county = ref('');
     const selected = ref([]), tests = ref(false), manual = ref(''), error = ref('');
     const sound = ref(false), saving = ref(false), online = ref(false);
@@ -13,7 +14,7 @@ export default {
     const choices = computed(() => counties.value.filter(c => c.state === stateCode.value));
     const active = computed(() => (data.value?.active || []).filter(a => a.expires * 1000 > clock.value));
     async function request(path, body) {
-      const response = await fetch('/api/alerts' + path, {
+      const response = await fetch(receiverUrl('/api/alerts' + path, props.receiverId), {
         cache: 'no-store', signal: AbortSignal.timeout(5000),
         ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       });
@@ -83,12 +84,13 @@ export default {
   template: `
     <p v-if="!showSettings && data?.settings.counties.length" class="notice">Weather alerts: {{!online?'service disconnected':data.error?'decoder error':data.monitoring?'monitoring NOAA audio':'not monitoring — tune NOAA Weather'}}.</p>
     <section v-for="a in active" :key="a.id" class="same-banner" role="alert">
-      <strong>{{a.test ? 'TEST · ' : ''}}{{a.title}}</strong>
+      <strong>{{sourceName ? sourceName+' · ' : ''}}{{a.test ? 'TEST · ' : ''}}{{a.title}}</strong>
       <p>{{a.locations.map(name).join(' · ')}}</p>
       <p>Issued {{date(a.issued)}} · Expires {{date(a.expires)}} · {{a.sender}}</p>
       <p>Listen to the NOAA broadcast for details and instructions.</p>
       <button @click="acknowledge(a.id)">Dismiss alert</button>
     </section>
+    <p v-if="!showSettings&&data?.monitoring" class="notice">{{sourceName}} · Monitoring NOAA <button @click="sound?disableSound():enableSound()">{{sound?'Disable alert sound':'Enable alert sound & test'}}</button></p>
     <section v-if="showSettings" class="panel same-settings">
       <div class="panel-title"><span>NOAA WEATHER ALERTS</span><span>{{!online?'Alert service disconnected':data?.error?'Decoder error':data?.monitoring?'Monitoring NOAA audio':'Not monitoring — tune a NOAA channel'}}</span></div>
       <p>Keep the receiver on a NOAA channel covering your county and this page open. Playback may be muted. Browser sleep or a closed page prevents banner and sound delivery.</p>

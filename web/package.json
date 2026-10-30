@@ -3,7 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": {"dev": "vite --host 127.0.0.1", "build": "vite build", "test": "node --test tests/*.test.js"},
-  "dependencies": {"vue": "3.5.44"},
-  "devDependencies": {"vite": "8.3.5"}
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "hls.js": "1.7.4",
+    "vue": "3.5.44"
+  },
+  "devDependencies": {
+    "vite": "8.3.5"
+  }
 }

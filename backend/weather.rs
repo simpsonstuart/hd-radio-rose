@@ -72,7 +72,7 @@ fn same_audio() -> std::sync::mpsc::SyncSender<(u64, Vec<u8>)> {
     use std::{io::Write, net::{TcpStream, SocketAddr}, sync::mpsc, time::Duration};
     let (tx, rx) = mpsc::sync_channel::<(u64, Vec<u8>)>(16);
     std::thread::spawn(move || {
-        let addr: SocketAddr = "127.0.0.1:8093".parse().unwrap();
+        let addr: SocketAddr = crate::runtime::address("ROSE_SAME_PORT", 8093).parse().unwrap();
         let mut stream: Option<TcpStream> = None;
         let mut expected = 0;
         while let Ok((sequence, bytes)) = rx.recv() {

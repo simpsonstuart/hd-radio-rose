@@ -70,3 +70,22 @@ except urllib.error.HTTPError as error:
     assert error.code == 409
 assert json.loads(request('/api/command', {'type':'SelectBand','value':'fm'}))['band'] == 'fm'
 print('Native API, auth, settings, presets, CSV and input validation passed')
+
+fm = json.loads(request('/api/state'))
+am = json.loads(request('/api/command', {'type':'SelectBand','value':'am'}))
+assert am['band'] == 'am' and not am['streaming']
+assert am['config']['gain_mode'] == 'manual'
+for enabled in [False, True]:
+    am = json.loads(request('/api/command', {'type':'SetAmConverter','value':enabled}))
+    assert am['am_converter'] == enabled
+    assert abs(am['hardware_frequency_mhz'] - am['frequency'] - (125 if enabled else 0)) < 1e-6
+for command in [{'type':'TuneAm','value':1000}, {'type':'RecallPreset','value':0}, {'type':'TuneMhz','value':99.1}]:
+    try:
+        request('/api/command', command)
+        raise AssertionError('Idle AM tuning or FM command accepted')
+    except urllib.error.HTTPError as error:
+        assert error.code == 409
+restored = json.loads(request('/api/command', {'type':'SelectBand','value':'fm'}))
+assert restored['frequency'] == fm['frequency']
+assert restored['config']['gain_mode'] == fm['config']['gain_mode']
+print('AM band, converter and FM restoration passed')

@@ -7,7 +7,7 @@ fn open_stream(
     use std::io::Write;
     use std::net::TcpListener;
     use std::time::{Duration, Instant};
-    let listener = match TcpListener::bind("127.0.0.1:8092") {
+    let listener = match TcpListener::bind(crate::runtime::address("ROSE_PCM_PORT", 8092)) {
         Ok(listener) => listener,
         Err(error) => return (None, Some(format!("PCM socket: {error}"))),
     };

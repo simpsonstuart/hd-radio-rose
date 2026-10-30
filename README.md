@@ -57,7 +57,7 @@ recording stays in persistent storage and the download library.
 radio-specific regression tests still need the first Actions run; physical RTL-SDR
 and HackRF reception, maps and recording need validation on your ROSE. Upstream
 describes HackRF as profile-only/not bench-validated. This project does not change
-that status. One shared receiver session is controlled by all signed-in users.
+that status. Each receiver session is shared by signed-in users; separate sources have independent sessions.
 
 ## GitHub Actions: build on push
 
@@ -174,9 +174,10 @@ proxy should preserve the Host header and avoid buffering `/audio.mp3`.
 All control requests are serialized through the Rust model. Cross-origin browser
 commands and oversized/invalid inputs are rejected. Browser clients poll state at
 1 Hz and spectrum at up to 4 Hz while visible; polling slows in background tabs.
-Internal API/PCM services bind loopback only. Health does not indicate RF lock or
+Internal API/PCM services bind loopback only. Platform health indicates that the receiver manager is available. Per-receiver
+health additionally checks engine heartbeat and audio output; neither indicates RF lock or
 USB access. Optional restart-on-failure is configured in RouterOS, independently
-of start-on-boot. Give the container at least 15 seconds to stop so active Opus
+of start-on-boot. Give the container at least 25 seconds to stop so active Opus
 files and persistent state can be finalized.
 
 ## Troubleshooting
@@ -344,3 +345,216 @@ duplicate rejection and end-of-message detection. Container smoke tests exercise
 PCM delivery through the live alert API. Live reception remains unverified on
 the ROSE; keep an established weather-alert source available during validation.
 Decoder source is included in the image's corresponding-source archive.
+
+
+### Broadcast AM and Ham It Up
+
+Select **Broadcast AM / HD Radio** in the Band menu. This first AM band covers
+**530–1700 kHz in 10 kHz steps** (North American channel spacing). Enter `1000`
+for 1000 kHz; the API command is `{"type":"TuneAm","value":1000}` in kHz.
+FM and NOAA commands continue using MHz.
+
+With reception stopped, select **Ham It Up (+125 MHz)** (the default for AM),
+power the converter, connect your MF/HF antenna to its input and the SDR to its
+output, and put its physical switch in upconvert mode. The application tunes the
+SDR to the station frequency plus 125 MHz: 1000 kHz becomes 126.000 MHz. The dial,
+spectrum center and decoder metadata retain the original station frequency.
+The offset follows [Nooelec’s Ham It Up documentation](https://support.nooelec.com/hc/en-us/articles/360005812474-Ham-It-Up-Upconverter).
+Select **Native low-frequency tuning** only for hardware/drivers that can tune
+these frequencies without a converter; this does not enable RTL direct sampling.
+For FM or NOAA, put the converter in bypass or remove it from the antenna path.
+
+Start reception and press **Listen**. In Settings, choose Automatic (analog/HD
+handoff), Analog only, or Digital only. The receiver explicitly selects libnrsc5’s
+AM mode for digital reception; analog AM uses a filtered mono envelope detector
+with DC removal and carrier normalization, delivered as 44.1 kHz stereo PCM.
+AM uses manual RF gain; adjust it in Settings. FM’s gain-mode preference survives
+band changes. HD channels and metadata use the existing digital pipeline, and
+Opus recording remains a digital-program feature. Analog AM recording is not
+implemented. An all-digital AM station requires digital reception and lock.
+
+AM frequency, FM frequency, band and converter selection are saved in
+`/data/web-band.json`. Changing band stops recording and interrupts NOAA SAME
+monitoring. AM seek and presets are not included yet; FM presets remain separate.
+The spectrum still spans 1.488375 MHz with 1024 bins, so it is a broad overview,
+not a high-resolution AM channel display. 9 kHz channel plans, shortwave, SSB/CW,
+and multiple independent receivers are future work.
+
+AM is implemented but **not hardware-validated**. Local checks cover input/API
+validation, frontend compilation and generated Rust syntax. CI includes an AM
+modulated-tone/adjacent-carrier DSP test and band/converter API smoke checks;
+the full ARM64 build and reception of analog, hybrid HD and all-digital AM must
+still be verified with the SDR and ROSE. The converter extends frequency access;
+SDR hardware still determines dynamic range, usable bandwidth and simultaneous
+receiver capability.
+
+
+### Sources and independent receivers
+
+The **Sources & receivers** panel manages up to eight independent source sessions (SDR or HDHomeRun tuner).
+Each has its own engine process, audio encoder/stream, FM/AM/NOAA band settings,
+presets, gain and converter settings, artwork, song history, recordings and SAME
+alert decoder. A failed worker is marked failed and its companion service is
+stopped; the manager and other receivers continue. Recovery is explicit through
+**Start session**, rather than an unlimited restart loop.
+
+Existing installations become the **Default receiver**, retaining the existing
+`/data` layout and unprefixed API/audio URLs. No presets or recordings are moved.
+Before adding a second source:
+
+1. In Sources, stop the Default session. This finishes its recording and stops
+   its reception/NOAA monitoring.
+2. Edit Default and bind it to a unique device serial or remote endpoint.
+3. Save it and start its session again.
+4. Add another source with its own ID, name, connection, and optional location,
+   antenna description and purpose. Start its session and open its workspace.
+5. Choose FM, AM or NOAA and use **Start receiver** and **Listen** as before.
+
+**Start session** launches the engine and audio services; **Start receiver** opens
+hardware and begins RF reception. Enabled sessions return after a container
+restart, with saved settings, but RF reception still requires Start receiver.
+Changing the browser workspace stops that browser's playback and loads the other
+receiver. It does not stop either receiver's reception, recording or SAME decoder.
+Multiple browser tabs can listen independently. NOAA banners are polled across
+registered sources and labeled by source; alert settings apply to the selected
+receiver. Enable sound for each monitored source in each browser session. Reloads
+and workspace navigation reset browser sound permission, as before.
+
+Local RTL-SDR/HackRF sources require serial numbers, not enumeration indexes.
+Give RTL-SDRs distinct hardware serials before registering them. Duplicate
+canonical connections and duplicate assignments are rejected. The registry cannot
+prove that different remote host aliases or protocols ultimately expose the same
+physical radio: register that hardware once, and avoid other applications claiming
+it. Driver/transport/endpoint changes in the receiver Settings panel are locked
+once the source is managed; edit the source while its session is stopped instead.
+PPM, gain and antenna-input controls remain receiver settings. The source's antenna
+text is descriptive and does not select a hardware input.
+
+Remote connections use the existing `rtl_tcp` and SoapyRemote backends. Supply a
+hostname or IPv4 address and port; SoapyRemote additionally requires the downstream
+radio driver and serial. Use the same hostname spelling for a given endpoint.
+Remote servers and their network access must already be configured. This does not
+install servers, configure VPNs, or implement TV reception.
+
+The registry is versioned at `/data/sources.json`. Source records contain `kind`,
+connection identity and descriptive metadata; receiver records separately contain
+`source_id`, runtime slot and enabled state. The implemented providers are `sdr` and `hdhomerun`; each source owns one receiver session. Capabilities describe supported decoder
+features, not a guarantee that a particular antenna/radio covers every band.
+Additional TV adapters can add provider-specific connection validation,
+capabilities and workers while retaining source identity and receiver routing.
+Unknown provider/schema versions fail validation rather than being opened as SDRs.
+
+Additional receiver storage lives under `/data/receivers/RECEIVER_ID/`. All Rust
+paths, PCM/RPC ports, heartbeat files, audio encoders and SAME ports are assigned
+per worker. HTTP routing keeps media and downloads inside the selected receiver's
+storage. The default receiver cannot read additional receivers' media through its
+legacy media endpoint. Internal services remain loopback-only.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/sources` or `/api/receivers` | Registry, capabilities and session process status |
+| `POST /api/sources` | Create/update a stopped source; new receiver starts disabled |
+| `POST /api/receivers/ID/lifecycle` | `{"action":"start"}` or `{"action":"stop"}` |
+| `/api/receivers/ID/api/state` | Selected receiver state (same schema as legacy state) |
+| `/api/receivers/ID/api/command` | Selected receiver commands |
+| `/api/receivers/ID/audio.mp3` | Selected receiver audio |
+| `/api/receivers/ID/api/…` | Spectrum, media, recordings, CSV and SAME APIs |
+| `/api/receivers/ID/healthz` | Engine heartbeat + encoder health for that receiver |
+
+All new routes inherit the existing nginx authentication; mutations enforce the
+same origin and request size limits. The legacy `/api/*` and `/audio.mp3` routes
+continue addressing Default. Source removal, receiver reassignment, auto-start RF,
+resource scheduling and other TV adapters are not included in this foundation.
+Back up the whole `/data` directory, including the registry and receiver subfolders.
+Allow at least 25 seconds for container shutdown so recordings can finish.
+
+Local validation covers registry migration/persistence, identity rejection,
+separate ports and directories, failure isolation, real HTTP proxy routing,
+concurrent requests, source/receiver templates and the frontend build. The ARM64
+smoke suite now starts two actual receiver engines, verifies band/settings/SAME
+isolation and restart persistence, without opening SDR hardware. Full ARM64 build
+and smoke execution remain pending in this Windows workspace. Concurrent RTL-SDR,
+HackRF and remote RF reception still need hardware validation; the eight-session
+limit is an application bound, not a measured ROSE capacity guarantee.
+
+
+### HDHomeRun live television
+
+In **Sources & receivers**, choose **Add source → HDHomeRun TV tuner**. Enter a
+source ID/name, the device hostname or IPv4 address, its eight-character Device ID
+(from the device label or web interface), and a tuner index starting at **0**.
+Add one source per tuner you want to use; for example, the same four-tuner device
+can supply separate `tv-living-room` (tuner 0) and `tv-dx` (tuner 1) sources.
+The device ID plus tuner index is exclusive within the registry, including when
+hosts are entered under different aliases. Default remains an SDR source.
+Adding TV does not require binding an otherwise single legacy Default SDR.
+
+Start the TV **session**, open its workspace, choose a channel and click
+**Watch channel**. The device must already have a scanned channel lineup.
+**Refresh lineup** retrieves the current list; it does not initiate a disruptive
+hardware scan. Hosts must be reachable from the ROSE on HTTP port 80 and stream
+port 5004. Prefer a stable LAN IP or resolvable hostname; this implementation does
+not perform LAN broadcast discovery or configure remote network connectivity.
+
+The provider verifies `/discover.json` against the registered device ID and tuner
+count before tuning, fetches `/lineup.json`, and opens the named tuner’s stream.
+It never silently selects another available tuner. A tuner already used by another
+application returns an error. Device-supplied stream URLs and authentication tokens
+are not passed to the browser. These interfaces follow the
+[SiliconDust HTTP development guide](https://info.hdhomerun.com/info/http_api).
+
+One FFmpeg process per active TV source converts the MPEG transport stream to
+**H.264 video and AAC stereo, up to 1280×720 at 30 fps**, with deinterlacing.
+Output uses a short rolling HLS segment buffer under that receiver’s runtime
+directory; it is not a TV recording or DVR. Browsers use native HLS where available
+or bundled, version-locked [hls.js](https://github.com/video-dev/hls.js).
+The player dependency is loaded only for TV workspaces. All playlists and segments
+stay behind the existing authenticated, same-origin receiver routes.
+
+TV transcoding uses CPU on the server and adds several seconds of buffering.
+Two codec threads are requested per stream, but total CPU usage and practical
+concurrency on ROSE are not yet measured. Starting many TV streams alongside
+HackRF/RTL-SDR decoding can exceed available resources. Hardware transcoding,
+original-quality passthrough, EXTEND transcoding profiles, TV recordings, captions,
+program-guide integration and audio-track selection are not implemented.
+
+Each TV source has **one shared channel**. Other browsers can join the same stream;
+changing channel or **Stop stream for everyone** affects all its viewers.
+**Close my playback** detaches only that browser. A stream automatically stops
+and releases its tuner after 60 seconds without playlist/segment requests; this
+also handles closed tabs. Failed/stalled encoders report diagnostics and release
+the input. Stopping the source session also stops its stream. Other source sessions
+continue, and source-labeled NOAA alerts remain visible in the TV workspace.
+Session restart loads device/lineup data but does not automatically start video.
+
+Protected channels are marked unavailable; there is no DRM playback/decryption
+integration. Lineups reporting AC-4 audio are also marked unavailable because the
+container’s FFmpeg path does not support it. Unknown or additional codec/receiver
+limitations can still fail during playback, with diagnostics shown in the TV
+workspace. This is not a claim of complete ATSC 3.0 playback support.
+
+The TV state separates device identity/model/firmware/tuner count, channel lineup,
+reported codecs and availability, lineup refresh time, and playback diagnostics.
+These are the starting points for future ATSC DX features. They are **not** RF
+signal measurements or confirmed reception logs: RF scanning, strength/quality,
+physical-channel mappings, transport/program inspection and persistent DX
+observations remain future work.
+
+| Receiver-scoped endpoint | Purpose |
+| --- | --- |
+| `GET /api/receivers/ID/api/state` | TV-specific state with `kind: "hdhomerun"` |
+| `POST /api/receivers/ID/api/tv/refresh` | Refresh device/lineup, body `{}` |
+| `POST /api/receivers/ID/api/tv/play` | Start/join channel, e.g. `{"channel":"5.1"}` |
+| `POST /api/receivers/ID/api/tv/stop` | Stop the shared stream, body `{}` |
+| `GET /api/receivers/ID/tv/hls/TOKEN/index.m3u8` | Current stream playlist; use the state’s playback URL |
+
+TV uses a separate Python provider worker, never the NRSC5/NOAA engine. The
+existing process supervisor, source editing rules and HTTP routing are reused.
+Tests cover mixed SDR/TV registries, tuner identity conflicts, discovery identity
+checks, protected/unsupported lineup entries, explicit tuner URLs, buffer-path
+confinement, idle cleanup, provider launch selection and browser template builds.
+A container smoke test converts synthetic MPEG-2/AC-3 TV to H.264/AAC HLS and
+checks the generated codecs. **Actual HDHomeRun reception, browser video playback,
+ARM64 transcoding and the synthetic media smoke test have not run locally**:
+this Windows workspace has no HDHomeRun or FFmpeg installation. Validate the
+container build and one TV stream on your ROSE before increasing concurrency.

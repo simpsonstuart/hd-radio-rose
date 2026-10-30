@@ -19,8 +19,8 @@ def patch(root, adapter=None):
     root = Path(root)
     adapter = Path(adapter or Path(__file__).resolve().parents[1] / "backend")
     app = (root / "src/app.rs").read_text(encoding="utf-8")
-    app = replace_once(app, "pub struct Nrsc5App {", "pub struct Nrsc5App {\n    wx_band: bool,\n    wx_frequency: f64,\n    wx_session: Option<crate::weather::WeatherReceiver>,")
-    app = replace_once(app, "        let mut app = Self {", "        let mut app = Self {\n            wx_band: false, wx_frequency: 162.400, wx_session: None,")
+    app = replace_once(app, "pub struct Nrsc5App {", "pub struct Nrsc5App {\n    wx_band: bool,\n    am_band: bool,\n    am_frequency: f64,\n    fm_frequency: f32,\n    am_converter: bool,\n    wx_frequency: f64,\n    wx_session: Option<crate::weather::WeatherReceiver>,")
+    app = replace_once(app, "        let mut app = Self {", "        let mut app = Self {\n            am_band: false, am_frequency: 1.0, fm_frequency: 101.1, am_converter: true, wx_band: false, wx_frequency: 162.400, wx_session: None,")
     app = replace_once(app, "pub fn new(cc: &eframe::CreationContext<'_>) -> Self {",
                        "pub fn new(ctx: &egui::Context) -> Self {")
     app = app.replace("&cc.egui_ctx", "ctx")
@@ -42,12 +42,26 @@ def patch(root, adapter=None):
     }
 }
 """
+    # Discovery may describe hardware but must never replace a registry-bound
+    # device with the first available radio when its assigned serial is absent.
+    app = replace_once(app, "                if !same_selection {", "                if !same_selection && std::env::var_os(\"ROSE_SDR_BINDING\").is_none() {")
     app += (adapter / "api.rs").read_text(encoding="utf-8")
+    app = replace_once(app, "                let mhz = snap_fm_tune_mhz(mhz);", "                let mhz = if self.am_band { mhz } else { snap_fm_tune_mhz(mhz) };")
+    app = replace_once(app, "                let mhz = self.app_state.frequency_mhz;", "                nrsc5.am_mode = self.am_band;\n                nrsc5.converter_hz = if self.am_band && self.am_converter { 125_000_000 } else { 0 };\n                let mhz = self.app_state.frequency_mhz;")
+    app = replace_once(app, "                    self.config.gain_mode,", "                    if self.am_band { crate::config::GainMode::Manual } else { self.config.gain_mode },")
+    app = app.replace('(self.config.frequency_mhz * 10.0).round() as u32', '(self.config.frequency_mhz * if self.am_band { 1000.0 } else { 10.0 }).round() as u32 + if self.am_band { 10000 } else { 0 }')
+    app = app.replace('(mhz * 10.0).round() as u32);', '(mhz * if self.am_band { 1000.0 } else { 10.0 }).round() as u32 + if self.am_band { 10000 } else { 0 });')
+    app += (adapter / "am_api.rs").read_text(encoding="utf-8")
     app += (adapter / "weather_api.rs").read_text(encoding="utf-8")
     (root / "src/weather.rs").write_text((adapter / "weather.rs").read_text(encoding="utf-8"), encoding="utf-8")
     analog_path = root / "src/dsp/fm_analog.rs"
-    analog_path.write_text(analog_path.read_text(encoding="utf-8") + "\n" + (adapter / "nfm.rs").read_text(encoding="utf-8"), encoding="utf-8")
+    analog_path.write_text(analog_path.read_text(encoding="utf-8") + "\n" + (adapter / "nfm.rs").read_text(encoding="utf-8") + "\n" + (adapter / "am.rs").read_text(encoding="utf-8"), encoding="utf-8")
     (root / "src/app.rs").write_text(app, encoding="utf-8")
+    (root / "src/runtime.rs").write_text((adapter / "runtime.rs").read_text(encoding="utf-8"), encoding="utf-8")
+    paths_path = root / "src/paths.rs"
+    paths = paths_path.read_text(encoding="utf-8")
+    paths = replace_once(paths, "            let exe = std::env::current_exe().ok()?;", "            if let Ok(path) = std::env::var(\"ROSE_DATA_DIR\") { return Some(PathBuf::from(path)); }\n            let exe = std::env::current_exe().ok()?;")
+    paths_path.write_text(paths, encoding="utf-8")
     audio_path = root / "src/audio/mod.rs"
     audio = audio_path.read_text(encoding="utf-8")
     audio = replace_once(audio, "use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};", "")
@@ -138,6 +152,12 @@ def patch(root, adapter=None):
     agc_path.write_text(agc, encoding="utf-8")
     ffi_path = root / "src/ffi/mod.rs"
     ffi = ffi_path.read_text(encoding="utf-8")
+    ffi = replace_once(ffi, "pub struct Nrsc5Process {", "pub struct Nrsc5Process {\n    pub am_mode: bool,\n    pub converter_hz: u32,")
+    ffi = replace_once(ffi, "        Ok(Self {", "        Ok(Self {\n            am_mode: false, converter_hz: 0,")
+    ffi = replace_once(ffi, "session.set_mode(Mode::Fm)?;", "session.set_mode(if self.am_mode { Mode::Am } else { Mode::Fm })?;")
+    ffi = ffi.replace('center_freq_hz: (frequency_mhz * 1_000_000.0) as u32,', 'center_freq_hz: (frequency_mhz as f64 * 1_000_000.0).round() as u32 + self.converter_hz,')
+    ffi = replace_once(ffi, "                    let analog_stereo = analog_fallback_stereo;", "                    let am_mode = self.am_mode;\n                    let analog_stereo = analog_fallback_stereo;")
+    ffi = replace_once(ffi, "let mut demod = crate::dsp::FmDemod::new();", "let mut demod = crate::dsp::fm_analog::BroadcastDemod::new(am_mode);")
     ffi = replace_once(ffi, "        let _ = apply_agc_action(sdr, &profile, &action);", '''        apply_agc_action(sdr, &profile, &action).ok_or_else(|| SdrError::SoapyCall {
             func: "set_manual_gain", detail: "Driver rejected gain or gain element unavailable; see receiver log".into(),
         })?;''')

@@ -2,25 +2,39 @@
 // Appended inside app.rs: serialized mutations use upstream command handlers.
 impl Nrsc5App {
     pub fn web_init(&mut self) -> Result<(), String> {
-        if let Ok(text) = std::fs::read_to_string("/data/web-band.json") {
+        if let Ok(source) = std::env::var("ROSE_SDR_BINDING") {
+            let binding: serde_json::Value = serde_json::from_str(&source).map_err(|e| e.to_string())?;
+            let mut sdr = serde_json::to_value(&self.config.sdr).map_err(|e| e.to_string())?;
+            for (key, value) in binding.as_object().ok_or("Invalid source binding")? { sdr[key] = value.clone(); }
+            self.config.sdr = serde_json::from_value(sdr).map_err(|e| e.to_string())?;
+        }
+        self.fm_frequency = self.app_state.frequency_mhz;
+        if let Ok(text) = std::fs::read_to_string(crate::runtime::data("web-band.json")) {
             if let Ok(saved) = serde_json::from_str::<serde_json::Value>(&text) {
                 self.wx_band = saved["band"] == "noaa";
+                self.am_band = saved["band"] == "am";
+                self.am_converter = saved["am_converter"].as_bool().unwrap_or(true);
+                if let Some(f) = saved["am_frequency"].as_f64().filter(|v| v.is_finite() && (0.53..=1.7).contains(v) && (v*100.0 - (v*100.0).round()).abs() < 0.0001) { self.am_frequency = f; }
+                if let Some(f) = saved["fm_frequency"].as_f64().filter(|v| (87.9..=107.9).contains(v)) { self.fm_frequency = snap_fm_tune_mhz(f as f32); }
+                if self.am_band { self.app_state.frequency_mhz = self.am_frequency as f32; self.config.frequency_mhz = self.app_state.frequency_mhz; }
+                else { self.app_state.frequency_mhz = self.fm_frequency; self.config.frequency_mhz = self.fm_frequency; }
                 if let Some(hz) = saved["frequency"].as_f64().and_then(crate::weather::channel_hz) { self.wx_frequency = hz as f64 / 1e6; }
             }
         }
         if let Some(error) = &self.audio_player.init_error { return Err(error.clone()); }
         if !self.config.recording_dir.as_deref().is_some_and(|p| {
             let path = std::path::Path::new(p);
-            path.starts_with("/data/recordings") && !path.components().any(|c| c == std::path::Component::ParentDir)
-        }) { self.config.recording_dir = Some("/data/recordings".into()); }
+            path.starts_with(crate::runtime::data("recordings")) && !path.components().any(|c| c == std::path::Component::ParentDir)
+        }) { self.config.recording_dir = Some(crate::runtime::data("recordings").to_string_lossy().into_owned()); }
         self.refresh_sdr_devices();
         Ok(())
     }
 
     pub fn web_save(&mut self) {
-        let saved = serde_json::json!({"band":if self.wx_band {"noaa"} else {"fm"},"frequency":self.wx_frequency});
-        if std::fs::write("/data/web-band.json.tmp", saved.to_string()).is_ok() {
-            let _ = std::fs::rename("/data/web-band.json.tmp", "/data/web-band.json");
+        if !self.am_band && !self.wx_band { self.fm_frequency = self.app_state.frequency_mhz; }
+        let saved = serde_json::json!({"band":if self.wx_band {"noaa"} else if self.am_band {"am"} else {"fm"},"frequency":self.wx_frequency,"am_frequency":self.am_frequency,"am_converter":self.am_converter,"fm_frequency":self.fm_frequency});
+        if std::fs::write(crate::runtime::data("web-band.json.tmp"), saved.to_string()).is_ok() {
+            let _ = std::fs::rename(crate::runtime::data("web-band.json.tmp"), crate::runtime::data("web-band.json"));
         }
         self.sync_runtime_to_config();
         save_config(&self.config);
@@ -29,6 +43,11 @@ impl Nrsc5App {
 
     pub fn web_request(&mut self, request: serde_json::Value) -> serde_json::Value {
         use serde_json::json;
+        if request["op"] == "command" && std::env::var_os("ROSE_SDR_BINDING").is_some()
+            && matches!(request["command"]["type"].as_str().unwrap_or(""), "SelectSdrDevice" | "SelectSdrTransport" | "SetSdrRemoteHost" | "SetSdrRemotePort" | "SetSdrRemoteExtraArgs" | "ResetSdrConfig") {
+            return json!({"error":"Source assignment is managed in Sources; stop the receiver session before editing it"});
+        }
+        if let Some(response) = self.am_command(&request) { return response; }
         if let Some(response) = self.weather_command(&request) { return response; }
         match request["op"].as_str().unwrap_or("") {
             "self_test" if std::env::var("NRSC5_SELF_TEST").as_deref() == Ok("1") => {
@@ -60,7 +79,7 @@ impl Nrsc5App {
                 json!({"bins": s.spectrum_db, "generation": s.generation,
                     "sample_rate": s.sample_rate_sps, "center_hz": s.center_freq_hz})
             },
-            "export" => match self.play_log.export_csv(std::path::Path::new("/data/play-log.csv")) {
+            "export" => match self.play_log.export_csv(&crate::runtime::data("play-log.csv")) {
                 Ok(()) => json!({"ok": true}), Err(error) => json!({"error": error.to_string()})
             },
             "shutdown" => {
@@ -81,8 +100,8 @@ impl Nrsc5App {
                     UiCommand::SetPreset(i, p) if *i >= 48 || p.program > 7 => return json!({"error": "Invalid preset"}),
                     UiCommand::SetRecordingDir(path) if !path.as_deref().is_some_and(|p| {
                         let p = std::path::Path::new(p);
-                        p.starts_with("/data/recordings") && !p.components().any(|c| c == std::path::Component::ParentDir)
-                    }) => return json!({"error": "Recording folder must be beneath /data/recordings"}),
+                        p.starts_with(crate::runtime::data("recordings")) && !p.components().any(|c| c == std::path::Component::ParentDir)
+                    }) => return json!({"error": "Recording folder must stay inside this receiver’s recordings directory"}),
                     UiCommand::ExportLogCsv |
                     UiCommand::ShowSdrSettings | UiCommand::HideSdrSettings |
                     UiCommand::ShowAbout | UiCommand::HideAbout => return json!({"error": "Desktop-only command"}),
@@ -160,6 +179,8 @@ impl Nrsc5App {
             "payload": payload, "last_event": s.last_event
         });
         self.weather_state(&mut state);
+        self.am_state(&mut state);
+        state["source_managed"] = json!(std::env::var_os("ROSE_SDR_BINDING").is_some());
         state
     }
 }

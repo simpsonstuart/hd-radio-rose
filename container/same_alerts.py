@@ -3,6 +3,7 @@
 The TCP input is private, pre-volume 22050 Hz mono s16le NOAA audio. Every
 connection gets a fresh modem so headers from different channels cannot agree.
 """
+from runtime import DATA, port
 import datetime as dt
 import hashlib
 import json
@@ -66,7 +67,7 @@ def matches(location, county):
 
 
 class Alerts:
-    def __init__(self, directory=Path('/data')):
+    def __init__(self, directory=DATA):
         self.path = Path(directory) / 'same-alerts.json'
         self.lock = threading.RLock()
         self.settings = dict(counties=[], include_tests=False)
@@ -146,7 +147,7 @@ class Alerts:
     def start(self):
         self.listener = socket.socket()
         self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.listener.bind(('127.0.0.1', 8093))
+        self.listener.bind(('127.0.0.1', port('SAME', 8093)))
         self.listener.listen(4)
         self.listener.settimeout(1)
         threading.Thread(target=self.run, daemon=True).start()

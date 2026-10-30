@@ -51,3 +51,42 @@ test('broadcast paths are encoded rather than interpreted as URLs', () => {
   assert.equal(media(null), '');
   assert.equal(recordingUrl('Station/A.opus'), '/api/recording?name=Station%2FA.opus');
 });
+
+
+test('AM entry uses kHz and preserves distinct adjacent channels', async () => {
+  const {parseAmFrequency, formatFrequency} = await import('../model.js');
+  for (let khz=530; khz<=1700; khz+=10) {
+    assert.equal(parseAmFrequency(String(khz)),khz);
+    assert.equal(formatFrequency(khz/1000,'am'),String(khz));
+  }
+  for (const value of ['1.0','529','1701','531','1000.5','NaN','Infinity',''])
+    assert.throws(() => parseAmFrequency(value));
+  assert.equal(formatFrequency(1.00999999,'am'),'1010');
+  assert.equal(digitalLocked({band:'am',streaming:true,synced:true}),true);
+});
+
+
+test('source manager template compiles', () => {
+  const source = readFileSync(new URL('../sources.js', import.meta.url), 'utf8');
+  const template = source.slice(source.indexOf('template: `') + 11, source.lastIndexOf('`'));
+  const errors = [];
+  compile(template, { onError: e => errors.push(e.message) });
+  assert.deepEqual(errors, []);
+});
+
+test('receiver URLs scope commands, audio and downloads independently', async () => {
+  const {receiverUrl} = await import('../model.js');
+  for (const path of ['/api/state','/api/command','/api/alerts','/api/log.csv','/audio.mp3?t=1']) {
+    assert.equal(receiverUrl(path,'default'),path);
+    assert.equal(receiverUrl(path,'roof'),'/api/receivers/roof'+path);
+  }
+});
+
+
+test('television workspace template compiles', () => {
+  const source = readFileSync(new URL('../television.js', import.meta.url), 'utf8');
+  const template = source.slice(source.indexOf('template: `') + 11, source.lastIndexOf('`'));
+  const errors = [];
+  compile(template, {onError:e=>errors.push(e.message)});
+  assert.deepEqual(errors,[]);
+});

@@ -14,13 +14,18 @@ impl Nrsc5App {
         let kind = c["type"].as_str().unwrap_or("");
         if kind == "SelectBand" {
             let band = c["value"].as_str().unwrap_or("");
-            if !["fm", "noaa"].contains(&band) { return Some(json!({"error":"Unknown band"})); }
+            if !["fm", "noaa", "am"].contains(&band) { return Some(json!({"error":"Unknown band"})); }
             if self.retune_task.is_some() { return Some(json!({"error":"Wait for retuning to finish"})); }
             let was_running = self.app_state.is_streaming || self.wx_session.as_ref().is_some_and(|w| w.running());
+            if !self.wx_band && !self.am_band { self.fm_frequency = self.app_state.frequency_mhz; }
             self.wx_session.take();
             if self.app_state.is_streaming { self.handle_command(UiCommand::Stop); }
             self.audio_player.sink().clear();
             self.wx_band = band == "noaa";
+            self.am_band = band == "am";
+            self.app_state.frequency_mhz = if self.am_band { self.am_frequency as f32 } else { self.fm_frequency };
+            self.config.frequency_mhz = self.app_state.frequency_mhz;
+            self.app_state.selected_program = 0;
             if was_running {
                 if self.wx_band {
                     if let Err(e) = self.start_weather() { self.web_save(); return Some(json!({"error":e})); }

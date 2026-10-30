@@ -8,6 +8,8 @@ from unittest.mock import Mock, patch
 import io
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys
+sys.path.insert(0, str(ROOT / "container"))
 spec = importlib.util.spec_from_file_location('same_alerts', ROOT / 'container/same_alerts.py')
 same = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(same)

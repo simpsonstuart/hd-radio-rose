@@ -10,6 +10,8 @@ import unittest
 from unittest.mock import patch, Mock
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys
+sys.path.insert(0, str(ROOT / "container"))
 spec = importlib.util.spec_from_file_location('http_gateway', ROOT / 'container/gateway.py')
 gateway = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gateway)
@@ -97,9 +99,19 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(gateway.validate_command({'type':'TuneWeather','value':khz/1000})['value'],khz/1000)
         for value in [99.1,162.41,162.399,162.575,True]:
             with self.assertRaises(ValueError): gateway.validate_command({'type':'TuneWeather','value':value})
-        for band in ['fm','noaa']:
+        for band in ['fm','noaa','am']:
             self.assertEqual(gateway.validate_command({'type':'SelectBand','value':band})['value'],band)
-        with self.assertRaises(ValueError): gateway.validate_command({'type':'SelectBand','value':'am'})
+        with self.assertRaises(ValueError): gateway.validate_command({'type':'SelectBand','value':'ssb'})
+
+    def test_am_channels_and_converter_are_validated(self):
+        for khz in range(530,1701,10):
+            self.assertEqual(gateway.validate_command({'type':'TuneAm','value':khz})['value'],khz)
+        for value in [529,1701,531,1000.5,True,'1000',float('nan'),float('inf'),1.0]:
+            with self.assertRaises(ValueError): gateway.validate_command({'type':'TuneAm','value':value})
+        for value in [True,False]:
+            self.assertEqual(gateway.validate_command({'type':'SetAmConverter','value':value})['value'],value)
+        for value in [125, 'true', None]:
+            with self.assertRaises(ValueError): gateway.validate_command({'type':'SetAmConverter','value':value})
 
     def test_tuning_rejects_off_channel_frequencies(self):
         with patch.object(gateway, 'rpc', return_value={'ready': True}) as call:

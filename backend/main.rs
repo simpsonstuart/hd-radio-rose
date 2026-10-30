@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 mod app;
+mod runtime;
 mod art_cache;
 mod audio;
 mod collage;
@@ -30,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = app::Nrsc5App::new(&ctx);
     app.web_init()?;
     let (tx, rx) = mpsc::sync_channel::<(Value, mpsc::SyncSender<Value>)>(32);
-    let listener = TcpListener::bind("127.0.0.1:8091")?;
+    let listener = TcpListener::bind(crate::runtime::address("ROSE_RPC_PORT", 8091))?;
     std::thread::spawn(move || {
         for client in listener.incoming() {
             let Ok(mut client) = client else { continue };
@@ -69,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         *progress.lock().unwrap() = (Instant::now(), "event loop / runtime metrics".into());
         app.web_tick(&ctx);
         if last_heartbeat.elapsed() >= Duration::from_secs(1) {
-            std::fs::write("/run/rose/heartbeat", b"alive")?;
+            std::fs::write(crate::runtime::run("heartbeat"), b"alive")?;
             last_heartbeat = Instant::now();
         }
         if let Ok((request, reply)) = rx.recv_timeout(Duration::from_millis(50)) {

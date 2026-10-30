@@ -70,10 +70,8 @@ def main():
     Path("/run/rose/runtime").mkdir(exist_ok=True)
     os.chmod("/run/rose/runtime", 0o700)
     authentication()
-    app = start("headless NRSC5 receiver", ["/opt/nrsc5-studio/nrsc5-studio"])
-    Path("/run/rose/app.pid").write_text(str(app.pid))
-    ready([sys.executable, "-c", "from gateway import rpc; assert rpc({'op':'state'})['ready']"])
-    start("browser audio", [sys.executable, "/opt/rose/audio_server.py"])
+    start("receiver manager", [sys.executable, "/opt/rose/receivers.py"])
+    ready([sys.executable, "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/healthz',timeout=2)"])
     start("web interface", ["nginx", "-g", "daemon off;"])
     while not STOP:
         for name, process in SERVICES:
@@ -83,21 +81,14 @@ def main():
 
 
 def cleanup():
-    # Graceful model shutdown finalizes Opus files and persists state before
-    # terminating the encoder and HTTP services.
-    if any(name == "headless NRSC5 receiver" and p.poll() is None for name, p in SERVICES):
-        try:
-            from gateway import rpc
-            rpc({"op": "shutdown"}, timeout=8)
-        except Exception as error:
-            print(f"Graceful receiver shutdown: {error}", file=sys.stderr)
+    # The receiver manager finalizes each engine and joins its child processes.
     # Terminate all groups first, then give them a shared grace period.
     for _, process in reversed(SERVICES):
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
-    deadline = time.monotonic() + 7
+    deadline = time.monotonic() + 20
     for _, process in reversed(SERVICES):
         try:
             process.wait(timeout=max(0.01, deadline - time.monotonic()))

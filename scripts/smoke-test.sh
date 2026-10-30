@@ -12,7 +12,7 @@ docker run -d --name "$name" -p 127.0.0.1:18080:8080 \
     -e WEB_PASSWORD=ci-smoke-password -e NRSC5_SELF_TEST=1 "$image"
 ready=false
 for attempt in $(seq 1 90); do
-    if curl -fsS http://127.0.0.1:18080/healthz; then
+    if curl -fsS http://127.0.0.1:18080/healthz && curl -fsS -u radio:ci-smoke-password http://127.0.0.1:18080/api/receivers/default/healthz; then
         ready=true
         break
     fi
@@ -23,6 +23,9 @@ for attempt in $(seq 1 90); do
 done
 test "$ready" = true
 python3 scripts/smoke-http.py
+python3 scripts/smoke-receivers.py
+docker cp scripts/smoke-tv.py "$name":/tmp/smoke-tv.py
+docker exec "$name" python3 /tmp/smoke-tv.py
 docker cp scripts/test-same-decoder.py "$name":/tmp/test-same-decoder.py
 docker cp scripts/smoke-same.py "$name":/tmp/smoke-same.py
 docker exec "$name" python3 /tmp/smoke-same.py
@@ -39,10 +42,10 @@ python3 -c 'import re; text=open("/tmp/rose-audio-test.log").read(); match=re.se
 # Validate corresponding source archive exists and is readable.
 docker exec "$name" sh -c 'tar -tzf /usr/share/doc/hd-radio-rose/sources.tar.gz >/dev/null'
 # Restart and ensure persisted API settings survive graceful shutdown.
-docker restart -t 10 "$name"
+docker restart -t 25 "$name"
 sleep 5
 for attempt in $(seq 1 45); do
-    if curl -fsS http://127.0.0.1:18080/healthz; then
+    if curl -fsS http://127.0.0.1:18080/healthz && curl -fsS -u radio:ci-smoke-password http://127.0.0.1:18080/api/receivers/default/healthz; then
         docker exec "$name" python3 -c 'from gateway import rpc; s=rpc({"op":"state"}); assert s["config"]["presets"][0]["name"]=="CI preset"; assert s["config"]["show_hd5_hd8"]'
         docker exec "$name" python3 -c 'import json, urllib.request; s=json.load(urllib.request.urlopen("http://127.0.0.1:8090/api/alerts")); assert s["settings"]["counties"]==["053077"]; assert not s["active"]'
         exit 0
