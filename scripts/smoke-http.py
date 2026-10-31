@@ -75,6 +75,12 @@ fm = json.loads(request('/api/state'))
 am = json.loads(request('/api/command', {'type':'SelectBand','value':'am'}))
 assert am['band'] == 'am' and not am['streaming']
 assert am['config']['gain_mode'] == 'manual'
+if am['am_direct_sampling_supported']:
+    for mode, branch in [('direct_q', 2), ('direct_i', 1), ('native', 0), ('hamitup', 0)]:
+        am = json.loads(request('/api/command', {'type':'SetAmReception','value':mode}))
+        assert am['am_reception'] == mode and am['am_direct_sampling'] == branch
+        assert am['am_converter'] == (mode == 'hamitup')
+        assert abs(am['hardware_frequency_mhz'] - am['frequency'] - (125 if mode == 'hamitup' else 0)) < 1e-6
 for enabled in [False, True]:
     am = json.loads(request('/api/command', {'type':'SetAmConverter','value':enabled}))
     assert am['am_converter'] == enabled

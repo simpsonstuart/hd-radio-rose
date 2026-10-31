@@ -355,6 +355,33 @@ the ROSE; keep an established weather-alert source available during validation.
 Decoder source is included in the image's corresponding-source archive.
 
 
+### Analog audio quality (FM and NOAA)
+
+FM and NOAA use a band-limited fractional resampler with exact intermediate
+sample rates to produce 44.1 kHz audio. This replaces sample skipping, reducing
+resampling artifacts. The processing adds less than two milliseconds of filter
+delay beyond the existing audio pipeline.
+
+FM preserves quiet passages instead of gating individual samples near zero.
+A longer audio filter rejects the 19 kHz pilot, and a smoothed discriminator-noise
+measurement above the stereo/RDS multiplex reduces stereo width on noisy signals.
+Stereo narrowing and recovery use 25 ms and 250 ms time constants; it also retains the
+existing pilot-strength blend. You can still disable **Analog stereo** in Settings
+for continuous mono reception. The 75 microsecond FM de-emphasis is unchanged.
+
+NOAA uses a sharper 3 kHz voice low-pass and a 70 Hz DC/rumble filter in the listening
+path. Both FM and NOAA use a limiter that leaves ordinary levels linear and rounds
+overloaded peaks gently. NOAA retains its existing de-emphasis and voice gain.
+SAME decoding receives a separate, ungated feed before the listening-only DC filter
+and limiter, independent of playback mute and volume. There is no speech-level noise
+gate that cuts off quiet words or suppresses the alert decoder.
+
+These changes reduce processing artifacts and some hiss; they cannot reconstruct
+audio lost to weak RF or interference. Synthetic DSP tests cover quiet FM tones,
+stereo blending, filter rejection, resampling, tuning-offset removal and both SAME
+FSK tones. Listening tests with real receivers and ARM64 CPU measurements remain
+necessary before judging improvements under actual reception conditions.
+
 ### Broadcast AM and Ham It Up
 
 Select **Broadcast AM / HD Radio** in the Band menu. This first AM band covers
@@ -370,13 +397,24 @@ spectrum center and decoder metadata retain the original station frequency.
 The offset follows [Nooelec’s Ham It Up documentation](https://support.nooelec.com/hc/en-us/articles/360005812474-Ham-It-Up-Upconverter).
 Select **Native low-frequency tuning** only for hardware/drivers that can tune
 these frequencies without a converter; this does not enable RTL direct sampling.
+For an RTL-SDR with a direct-sampling input, stop reception and select
+**RTL-SDR direct sampling (Q branch)** or **(I branch)** under AM reception,
+matching your dongle's wiring. Connect an MF/HF antenna directly to the dongle;
+no Ham It Up or frequency offset is needed. The selection is saved per receiver.
+This works through local SoapySDR, SoapyRemote with an RTL-SDR, and rtl_tcp.
+The [SoapyRTLSDR driver](https://github.com/pothosware/SoapyRTLSDR/blob/master/Settings.cpp)
+uses `direct_samp` values 1 (I) and 2 (Q). Tuner gain controls are unavailable
+because direct sampling bypasses the tuner. FM and NOAA restore normal tuner mode.
+The API accepts `{"type":"SetAmReception","value":"direct_q"}`; other values
+are `direct_i`, `native`, and `hamitup`. Existing `SetAmConverter` commands retain
+their previous behavior and clear direct sampling.
 For FM or NOAA, put the converter in bypass or remove it from the antenna path.
 
 Start reception and press **Listen**. In Settings, choose Automatic (analog/HD
 handoff), Analog only, or Digital only. The receiver explicitly selects libnrsc5’s
 AM mode for digital reception; analog AM uses a filtered mono envelope detector
 with DC removal and carrier normalization, delivered as 44.1 kHz stereo PCM.
-AM uses manual RF gain; adjust it in Settings. FM’s gain-mode preference survives
+AM uses manual RF gain except in direct sampling; adjust it in Settings. FM’s gain-mode preference survives
 band changes. HD channels and metadata use the existing digital pipeline, and
 Opus recording remains a digital-program feature. Analog AM recording is not
 implemented. An all-digital AM station requires digital reception and lock.

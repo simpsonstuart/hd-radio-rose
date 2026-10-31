@@ -2,17 +2,20 @@
 // Two IQ stages: 1,488,375 -> 99,225 -> 49,612.5 complex samples/s.
 pub struct WeatherDemod {
     coarse: FirDecimator, channel: FirDecimator, audio: FirDecimator,
-    previous: (f32, f32), clock: OutputRateResampler,
+    previous: (f32, f32), resampler: AudioResampler,
     deemphasis: DeemphasisFilter,
+    dc: AudioDcBlocker,
+    pub decoder_sample: i16,
 }
 impl WeatherDemod {
     pub fn new() -> Self {
         Self {
             coarse: FirDecimator::new(lowpass_kernel(127, 25_000.0 / 1_488_375.0), 15),
             channel: FirDecimator::new(lowpass_kernel(127, 8_000.0 / 99_225.0), 2),
-            audio: FirDecimator::new(lowpass_kernel(63, 3_000.0 / 49_612.5), 1),
-            previous: (0.0, 0.0), clock: OutputRateResampler::new(49_612, 44_100),
+            audio: FirDecimator::new(lowpass_kernel(127, 3_000.0 / 49_612.5), 1),
+            previous: (0.0, 0.0), resampler: AudioResampler::new(49_612.5, 44_100),
             deemphasis: DeemphasisFilter::new(49_612, 750e-6),
+            dc: AudioDcBlocker::new(49_612.5, 70.0), decoder_sample: 0,
         }
     }
     pub fn push(&mut self, i: f32, q: f32) -> Option<[i16; 2]> {
@@ -22,8 +25,11 @@ impl WeatherDemod {
         self.previous = (i, q);
         let (voice, _) = self.audio.push(delta * (49_612.5 / (2.0 * PI * 5_000.0)), 0.0)?;
         let voice = self.deemphasis.push(voice);
-        if !self.clock.should_emit() { return None; }
-        let sample = (voice * 4.0 * 24_000.0).clamp(-32767.0, 32767.0) as i16;
+        // SAME gets ungated audio before listening-only DC removal and limiting.
+        let listening = self.dc.push(voice);
+        let [listening, decoder] = self.resampler.push([listening, voice])?;
+        self.decoder_sample = (decoder * 4.0 * 24_000.0).clamp(-32767.0, 32767.0) as i16;
+        let sample = (audio_soft_limit(listening * (96_000.0 / 32767.0)) * 32767.0) as i16;
         Some([sample, sample])
     }
 }

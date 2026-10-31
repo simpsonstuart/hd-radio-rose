@@ -57,7 +57,10 @@ mod am_tests {
                 assert_eq!(pair[0], pair[1]); output.push(pair[0] as f64);
             }
         }
-        assert!((21_850..22_100).contains(&output.len()));
+        // All three FIR histories must fill before the output clock starts.
+        let warmup = 127 + 255 * 15 + 127 * 30;
+        let expected = ((744_188 - warmup) as f64 * 44_100.0 / 1_488_375.0).round() as i64;
+        assert!((output.len() as i64 - expected).abs() <= 3, "{} frames", output.len());
         let tail = &output[8820..];
         let crossings = tail.windows(2).filter(|p| p[0] <= 0.0 && p[1] > 0.0).count();
         assert!((295..305).contains(&crossings), "{crossings}");

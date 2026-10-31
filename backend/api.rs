@@ -14,6 +14,7 @@ impl Nrsc5App {
                 self.wx_band = saved["band"] == "noaa";
                 self.am_band = saved["band"] == "am";
                 self.am_converter = saved["am_converter"].as_bool().unwrap_or(true);
+                self.am_direct_sampling = saved["am_direct_sampling"].as_i64().filter(|v| (0..=2).contains(v)).unwrap_or(0) as i32;
                 if let Some(f) = saved["am_frequency"].as_f64().filter(|v| v.is_finite() && (0.53..=1.7).contains(v) && (v*100.0 - (v*100.0).round()).abs() < 0.0001) { self.am_frequency = f; }
                 if let Some(f) = saved["fm_frequency"].as_f64().filter(|v| (87.9..=107.9).contains(v)) { self.fm_frequency = snap_fm_tune_mhz(f as f32); }
                 if self.am_band { self.app_state.frequency_mhz = self.am_frequency as f32; self.config.frequency_mhz = self.app_state.frequency_mhz; }
@@ -32,7 +33,7 @@ impl Nrsc5App {
 
     pub fn web_save(&mut self) {
         if !self.am_band && !self.wx_band { self.fm_frequency = self.app_state.frequency_mhz; }
-        let saved = serde_json::json!({"band":if self.wx_band {"noaa"} else if self.am_band {"am"} else {"fm"},"frequency":self.wx_frequency,"am_frequency":self.am_frequency,"am_converter":self.am_converter,"fm_frequency":self.fm_frequency});
+        let saved = serde_json::json!({"band":if self.wx_band {"noaa"} else if self.am_band {"am"} else {"fm"},"frequency":self.wx_frequency,"am_frequency":self.am_frequency,"am_converter":self.am_converter,"am_direct_sampling":self.am_direct_sampling,"fm_frequency":self.fm_frequency});
         if std::fs::write(crate::runtime::data("web-band.json.tmp"), saved.to_string()).is_ok() {
             let _ = std::fs::rename(crate::runtime::data("web-band.json.tmp"), crate::runtime::data("web-band.json"));
         }

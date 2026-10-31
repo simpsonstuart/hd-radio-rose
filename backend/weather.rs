@@ -36,17 +36,15 @@ impl WeatherReceiver {
             let mut decimate = false;
             let result = device.run_stream(&mut |bytes| {
                 if let Some(tap) = &tap { tap.feed(bytes); }
+                let mut mono = Vec::with_capacity(bytes.len() / 32);
                 for pair in bytes.chunks_exact(2) {
                     if let Some(audio) = demod.push((pair[0] as f32 - 127.5)/127.5, (pair[1] as f32 - 127.5)/127.5) {
                         samples.extend_from_slice(&audio);
+                        decimate = !decimate;
+                        if decimate { mono.extend_from_slice(&demod.decoder_sample.to_le_bytes()); }
                     }
                 }
-                // Independent of playback volume/mute. Voice is already low-pass filtered.
-                let mut mono = Vec::with_capacity(samples.len());
-                for stereo in samples.chunks_exact(2) {
-                    decimate = !decimate;
-                    if decimate { mono.extend_from_slice(&stereo[0].to_le_bytes()); }
-                }
+                // Alert decoding is independent of listening cleanup and volume/mute.
                 if !mono.is_empty() {
                     let _ = alert_audio.try_send((sequence, mono));
                     sequence = sequence.wrapping_add(1);

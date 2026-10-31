@@ -26,6 +26,19 @@ class Base(BaseHTTPRequestHandler):
 
 
 class HttpTests(unittest.TestCase):
+    def test_am_reception_modes_validate_before_rpc(self):
+        for mode in ['hamitup', 'native', 'direct_i', 'direct_q']:
+            command = {'type': 'SetAmReception', 'value': mode}
+            with patch.object(gateway, 'rpc', return_value={'ready': True}) as call:
+                status, _ = self.request('POST', '/api/command', json.dumps(command), {'Content-Type': 'application/json'})
+                self.assertEqual(status, 200)
+                call.assert_called_once_with({'op': 'command', 'command': command})
+        for invalid in [None, True, 2, 'direct', {}, '']:
+            with patch.object(gateway, 'rpc') as call:
+                status, _ = self.request('POST', '/api/command', json.dumps({'type': 'SetAmReception', 'value': invalid}), {'Content-Type': 'application/json'})
+                self.assertEqual(status, 400)
+                call.assert_not_called()
+
     @classmethod
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory(dir=ROOT)

@@ -64,6 +64,7 @@ NUMBERS = {"TuneMhz": (87.9, 107.9, False), "SelectProgram": (0, 7, True),
            "SetSdrRemotePort": (1, 65535, True), "SetSpectrumSmoothingAlpha": (0.1, 1, False),
            "SetRecordingMaxMinutes": (1, 240, True)}
 ENUMS = {"SetGainMode": {"auto", "manual", "hardware_agc"},
+         "SetAmReception": {"hamitup", "native", "direct_i", "direct_q"},
          "SelectBand": {"fm", "noaa", "am"},
          "SetAnalogFallbackMode": {"digital_only", "automatic", "analog_only"},
          "SelectSdrTransport": {"local_soapy", "soapy_remote", "rtl_tcp_remote"},
