@@ -68,6 +68,18 @@ try:
     raise AssertionError('Idle NOAA receiver accepted tuning')
 except urllib.error.HTTPError as error:
     assert error.code == 409
+gmrs = json.loads(request('/api/command', {'type':'SelectBand','value':'gmrs'}))
+assert gmrs['band'] == 'gmrs' and gmrs['frequency'] == 462.5625
+channels = gmrs['gmrs_channels_hz']
+assert len(set(channels)) == 30 and gmrs['gmrs_channel'] == 1
+assert all(hz + 5_000_000 == paired for hz, paired in zip(channels[14:22], channels[22:]))
+for command in [{'type':'TuneGmrs','value':1}, {'type':'TuneWeather','value':162.4},
+                {'type':'SetWeatherSpeech','value':True}]:
+    try:
+        request('/api/command', command)
+        raise AssertionError('Idle GMRS receiver accepted tuning or NOAA controls')
+    except urllib.error.HTTPError as error:
+        assert error.code == 409
 assert json.loads(request('/api/command', {'type':'SelectBand','value':'fm'}))['band'] == 'fm'
 print('Native API, auth, settings, presets, CSV and input validation passed')
 

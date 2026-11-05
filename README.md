@@ -336,6 +336,15 @@ several minutes. Cancel stops further tuning (an already submitted retune may
 finish). Seeking runs in the browser, so keep the page open. Tuning stops any
 active recording, as with ordinary station changes.
 
+### GMRS reception
+
+In **Listen**, select **GMRS** and start the receiver. Choose a U.S. channel
+(1–22) or a repeater input from the channel menu, then click **Listen** for
+audio. To hear a repeater’s output, choose its channel from 15–22. The
+corresponding input is labeled separately and is 5 MHz higher. Each SDR
+receiver remembers its last GMRS selection. GMRS uses mono FM and manual
+gain. Switching a receiver from NOAA to GMRS stops SAME monitoring on that SDR.
+
 ### NOAA Weather band
 
 Select **NOAA Weather** in the tuner’s Band menu. Start the receiver, choose a
@@ -530,7 +539,7 @@ receiver capability.
 ### Sources and independent receivers
 
 The **Sources & receivers** panel manages up to eight independent source sessions (SDR or HDHomeRun tuner).
-Each has its own engine process, audio encoder/stream, FM/AM/NOAA band settings,
+Each has its own engine process, audio encoder/stream, FM/AM/NOAA/GMRS band settings,
 presets, gain and converter settings, artwork, song history, recordings and SAME
 alert decoder. A failed worker is marked failed and its companion service is
 stopped; the manager and other receivers continue. Recovery is explicit through
@@ -546,7 +555,7 @@ Before adding a second source:
 3. Save it and start its session again.
 4. Add another source with its own ID, name, connection, and optional location,
    antenna description and purpose. Start its session and open its workspace.
-5. Choose FM, AM or NOAA and use **Start receiver** and **Listen** as before.
+5. Choose FM, AM, NOAA or GMRS and use **Start receiver** and **Listen** as before.
 
 **Start session** launches the engine and audio services; **Start receiver** opens
 hardware and begins RF reception. Enabled sessions return after a container

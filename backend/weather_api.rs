@@ -1,9 +1,13 @@
 impl Nrsc5App {
-    fn start_weather(&mut self) -> Result<(), String> {
+    fn narrowband_frequency(&self) -> f64 {
+        if self.gmrs_band { crate::weather::GMRS_HZ[self.gmrs_channel - 1] as f64 / 1e6 }
+        else { self.wx_frequency }
+    }
+    fn start_narrowband(&mut self) -> Result<(), String> {
         self.wx_session.take();
         self.audio_player.sink().clear();
-        let hz = crate::weather::channel_hz(self.wx_frequency).ok_or("Choose a NOAA channel")?;
-        self.wx_session = Some(crate::weather::WeatherReceiver::start(&self.config, hz,
+        let hz = (self.narrowband_frequency() * 1e6).round() as u32;
+        self.wx_session = Some(crate::weather::WeatherReceiver::start(&self.config, hz, self.wx_band,
             self.audio_player.sink(), self.app_state.spectrum_tap.clone())?);
         Ok(())
     }
@@ -14,28 +18,35 @@ impl Nrsc5App {
         let kind = c["type"].as_str().unwrap_or("");
         if kind == "SelectBand" {
             let band = c["value"].as_str().unwrap_or("");
-            if !["fm", "noaa", "am"].contains(&band) { return Some(json!({"error":"Unknown band"})); }
+            if !["fm", "noaa", "gmrs", "am"].contains(&band) { return Some(json!({"error":"Unknown band"})); }
             if self.retune_task.is_some() { return Some(json!({"error":"Wait for retuning to finish"})); }
             let was_running = self.app_state.is_streaming || self.wx_session.as_ref().is_some_and(|w| w.running());
-            if !self.wx_band && !self.am_band { self.fm_frequency = self.app_state.frequency_mhz; }
+            if !self.wx_band && !self.gmrs_band && !self.am_band { self.fm_frequency = self.app_state.frequency_mhz; }
             self.wx_session.take();
             if self.app_state.is_streaming { self.handle_command(UiCommand::Stop); }
             self.audio_player.sink().clear();
+            self.gmrs_band = band == "gmrs";
             self.wx_band = band == "noaa";
             self.am_band = band == "am";
             self.app_state.frequency_mhz = if self.am_band { self.am_frequency as f32 } else { self.fm_frequency };
             self.config.frequency_mhz = self.app_state.frequency_mhz;
             self.app_state.selected_program = 0;
             if was_running {
-                if self.wx_band {
-                    if let Err(e) = self.start_weather() { self.web_save(); return Some(json!({"error":e})); }
+                if self.wx_band || self.gmrs_band {
+                    if let Err(e) = self.start_narrowband() { self.web_save(); return Some(json!({"error":e})); }
                 } else { self.handle_command(UiCommand::Start); }
             }
             self.web_save();
             return Some(self.web_state());
         }
-        if !self.wx_band {
-            return if matches!(kind, "TuneWeather" | "SetWeatherSpeech") { Some(json!({"error":"Select NOAA Weather first"})) } else { None };
+        if kind == "TuneGmrs" && !self.gmrs_band {
+            return Some(json!({"error":"Select GMRS first"}));
+        }
+        if !self.wx_band && matches!(kind, "TuneWeather" | "SetWeatherSpeech") {
+            return Some(json!({"error":"Select NOAA Weather first"}));
+        }
+        if !self.wx_band && !self.gmrs_band {
+            return None;
         }
         let running = self.wx_session.as_ref().is_some_and(|w| w.running());
         let result: Result<(), String> = match kind {
@@ -43,13 +54,20 @@ impl Nrsc5App {
                 Some(enabled) => { self.wx_speech = enabled; Ok(()) }
                 None => Err("Expected a boolean for weather speech cleanup".into()),
             },
-            "Start" => if running { Ok(()) } else { self.start_weather() },
+            "Start" => if running { Ok(()) } else { self.start_narrowband() },
             "Stop" => { self.wx_session.take(); self.audio_player.sink().clear(); Ok(()) },
+            "TuneGmrs" => {
+                if !running { Err("Start the receiver before tuning".into()) }
+                else if let Some(channel) = crate::weather::gmrs_channel(&c["value"]) {
+                    self.gmrs_channel = channel;
+                    self.start_narrowband()
+                } else { Err("Invalid GMRS channel".into()) }
+            },
             "TuneWeather" => {
                 if !running { Err("Start the receiver before tuning".into()) }
                 else if let Some(hz) = c["value"].as_f64().and_then(crate::weather::channel_hz) {
                     self.wx_frequency = hz as f64 / 1e6;
-                    self.start_weather()
+                    self.start_narrowband()
                 } else { Err("Invalid NOAA channel".into()) }
             },
             "SetManualGainTenths" => {
@@ -67,9 +85,9 @@ impl Nrsc5App {
                 } else { Err("Invalid gain".into()) }
             },
             "TuneMhz" | "RecallPreset" | "SavePreset" | "SelectProgram" | "StartRecording" => Err("This control is for FM / HD Radio; select that band first".into()),
-            "SetGainMode" | "SetAgcAmpTargetDbfs" | "SetAnalogFallbackMode" => Err("NOAA uses narrowband FM with manual gain".into()),
+            "SetGainMode" | "SetAgcAmpTargetDbfs" | "SetAnalogFallbackMode" => Err("This band uses narrowband FM with manual gain".into()),
             "SetVolume" | "SetMute" => return None,
-            _ if running => Err("Stop NOAA reception before changing receiver settings".into()),
+            _ if running => Err("Stop reception before changing receiver settings".into()),
             _ => return None,
         };
         self.web_save();
@@ -77,18 +95,22 @@ impl Nrsc5App {
     }
     fn weather_state(&self, state: &mut serde_json::Value) {
         use serde_json::json;
-        state["band"] = json!(if self.wx_band {"noaa"} else {"fm"});
-        if !self.wx_band { return; }
+        state["band"] = json!(if self.gmrs_band {"gmrs"} else if self.wx_band {"noaa"} else {"fm"});
+        if !self.wx_band && !self.gmrs_band { return; }
+        if self.gmrs_band {
+            state["gmrs_channel"] = json!(self.gmrs_channel);
+            state["gmrs_channels_hz"] = json!(crate::weather::GMRS_HZ);
+        }
         state["weather_speech"] = json!(self.wx_speech);
         let running = self.wx_session.as_ref().is_some_and(|w| w.running());
-        state["frequency"] = json!(self.wx_frequency);
+        state["frequency"] = json!(self.narrowband_frequency());
         state["streaming"] = json!(running);
         state["synced"] = json!(false);
         state["retuning"] = json!(false);
         state["station"] = json!({});
         state["programs"] = json!([{}, {}, {}, {}, {}, {}, {}, {}]);
         state["selected"] = json!(0); state["speaker"] = json!(null);
-        state["status"] = json!(self.wx_session.as_ref().map(|w| w.status.lock().unwrap().clone()).unwrap_or("NOAA receiver idle".into()));
+        state["status"] = json!(self.wx_session.as_ref().map(|w| w.status.lock().unwrap().clone()).unwrap_or_else(|| if self.gmrs_band { "GMRS receiver idle".into() } else { "NOAA receiver idle".into() }));
         state["recording"] = json!(null); state["agc"] = json!(null);
         state["mer_lower"] = json!(0); state["mer_upper"] = json!(0); state["ber"] = json!(null);
         state["config"]["gain_mode"] = json!("manual");

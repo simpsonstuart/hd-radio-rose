@@ -120,9 +120,16 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(gateway.validate_command({'type':'TuneWeather','value':khz/1000})['value'],khz/1000)
         for value in [99.1,162.41,162.399,162.575,True]:
             with self.assertRaises(ValueError): gateway.validate_command({'type':'TuneWeather','value':value})
-        for band in ['fm','noaa','am']:
+        for band in ['fm','noaa','gmrs','am']:
             self.assertEqual(gateway.validate_command({'type':'SelectBand','value':band})['value'],band)
         with self.assertRaises(ValueError): gateway.validate_command({'type':'SelectBand','value':'ssb'})
+
+    def test_gmrs_channels_and_repeater_inputs(self):
+        for channel in range(1, 31):
+            self.assertEqual(gateway.validate_command({'type':'TuneGmrs','value':channel})['value'], channel)
+        for value in [0, 31, True, '1', 1.5, 462.5625]:
+            with self.assertRaises(ValueError):
+                gateway.validate_command({'type':'TuneGmrs','value':value})
 
     def test_am_channels_and_converter_are_validated(self):
         for khz in range(530,1701,10):

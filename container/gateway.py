@@ -65,7 +65,7 @@ NUMBERS = {"TuneMhz": (87.9, 107.9, False), "SelectProgram": (0, 7, True),
            "SetRecordingMaxMinutes": (1, 240, True)}
 ENUMS = {"SetGainMode": {"auto", "manual", "hardware_agc"},
          "SetAmReception": {"hamitup", "native", "direct_i", "direct_q"},
-         "SelectBand": {"fm", "noaa", "am"},
+         "SelectBand": {"gmrs", "fm", "noaa", "am"},
          "SetAnalogFallbackMode": {"digital_only", "automatic", "analog_only"},
          "SelectSdrTransport": {"local_soapy", "soapy_remote", "rtl_tcp_remote"},
          "SetRecordingMode": {"off", "on"}}
@@ -85,6 +85,8 @@ def validate_command(command):
         value = number(value, 530, 1700, True)
         if value % 10:
             raise ValueError("Choose 530–1700 kHz in 10 kHz steps")
+    elif kind == "TuneGmrs":
+        value = number(value, 1, 30, True)
     elif kind == "TuneWeather":
         value = number(value, 162.4, 162.55)
         khz = round(value * 1000)

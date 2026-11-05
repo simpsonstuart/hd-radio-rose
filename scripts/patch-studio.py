@@ -42,8 +42,8 @@ def patch(root, adapter=None):
     root = Path(root)
     adapter = Path(adapter or Path(__file__).resolve().parents[1] / "backend")
     app = (root / "src/app.rs").read_text(encoding="utf-8")
-    app = replace_once(app, "pub struct Nrsc5App {", "pub struct Nrsc5App {\n    wx_band: bool,\n    wx_speech: bool,\n    am_band: bool,\n    am_frequency: f64,\n    fm_frequency: f32,\n    am_converter: bool,\n    am_direct_sampling: i32,\n    wx_frequency: f64,\n    wx_session: Option<crate::weather::WeatherReceiver>,")
-    app = replace_once(app, "        let mut app = Self {", "        let mut app = Self {\n            am_band: false, am_frequency: 1.0, fm_frequency: 101.1, am_converter: true, am_direct_sampling: 0, wx_band: false, wx_speech: false, wx_frequency: 162.400, wx_session: None,")
+    app = replace_once(app, "pub struct Nrsc5App {", "pub struct Nrsc5App {\n    gmrs_band: bool,\n    gmrs_channel: usize,\n    wx_band: bool,\n    wx_speech: bool,\n    am_band: bool,\n    am_frequency: f64,\n    fm_frequency: f32,\n    am_converter: bool,\n    am_direct_sampling: i32,\n    wx_frequency: f64,\n    wx_session: Option<crate::weather::WeatherReceiver>,")
+    app = replace_once(app, "        let mut app = Self {", "        let mut app = Self {\n            am_band: false, am_frequency: 1.0, fm_frequency: 101.1, am_converter: true, am_direct_sampling: 0, gmrs_band: false, gmrs_channel: 1, wx_band: false, wx_speech: false, wx_frequency: 162.400, wx_session: None,")
     app = replace_once(app, "pub fn new(cc: &eframe::CreationContext<'_>) -> Self {",
                        "pub fn new(ctx: &egui::Context) -> Self {")
     app = app.replace("&cc.egui_ctx", "ctx")

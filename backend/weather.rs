@@ -4,6 +4,17 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 pub const CHANNELS: [u32; 7] = [162400000,162425000,162450000,162475000,162500000,162525000,162550000];
+// Channels 1–22, followed by the eight repeater inputs paired with 15–22.
+pub const GMRS_HZ: [u32; 30] = [
+    462562500, 462587500, 462612500, 462637500, 462662500, 462687500, 462712500,
+    467562500, 467587500, 467612500, 467637500, 467662500, 467687500, 467712500,
+    462550000, 462575000, 462600000, 462625000, 462650000, 462675000, 462700000, 462725000,
+    467550000, 467575000, 467600000, 467625000, 467650000, 467675000, 467700000, 467725000,
+];
+pub fn gmrs_channel(value: &serde_json::Value) -> Option<usize> {
+    let n = usize::try_from(value.as_u64()?).ok()?;
+    (1..=GMRS_HZ.len()).contains(&n).then_some(n)
+}
 pub fn channel_hz(mhz: f64) -> Option<u32> {
     CHANNELS.iter().copied().find(|hz| (mhz * 1e6 - *hz as f64).abs() < 1.0)
 }
@@ -11,7 +22,7 @@ pub struct WeatherReceiver {
     pub sdr: Arc<dyn Sdr>, worker: Option<JoinHandle<()>>, pub status: Arc<Mutex<String>>,
 }
 impl WeatherReceiver {
-    pub fn start(config: &AppConfig, hz: u32, sink: AudioSink, tap: Option<SpectrumTap>) -> Result<Self,String> {
+    pub fn start(config: &AppConfig, hz: u32, noaa: bool, sink: AudioSink, tap: Option<SpectrumTap>) -> Result<Self,String> {
         let sdr: Arc<dyn Sdr> = match config.sdr.transport {
             SdrTransport::RtlTcpRemote => Arc::new(RtlTcpSdr::open(&config.sdr.effective_remote_host(), config.sdr.effective_remote_port()).map_err(|e| e.to_string())?),
             _ => Arc::new(SoapySdr::open(&config.sdr.to_args_string()).map_err(|e| e.to_string())?),
@@ -19,7 +30,8 @@ impl WeatherReceiver {
         sdr.configure(&SdrConfig {center_freq_hz:hz, sample_rate_sps:1_488_375,
             ppm_correction:config.sdr.freq_correction_ppm.round() as i32, direct_sampling:0,
             initial_gain_tenths:Some(config.manual_gain_tenths), antenna:config.sdr.antenna.clone()}).map_err(|e| e.to_string())?;
-        let status = Arc::new(Mutex::new("Receiving NOAA weather (narrowband FM)".into()));
+        let band = if noaa { "NOAA weather" } else { "GMRS" };
+        let status = Arc::new(Mutex::new(format!("Receiving {band} (narrowband FM)")));
         let mut receiver = Self {sdr, worker:None, status};
         receiver.set_gain(config.manual_gain_tenths)?;
         for (name, value) in &config.sdr.gains {
@@ -31,7 +43,7 @@ impl WeatherReceiver {
         receiver.worker = Some(std::thread::spawn(move || {
             let mut demod = crate::dsp::fm_analog::WeatherDemod::new();
             let mut samples = Vec::with_capacity(4096);
-            let alert_audio = same_audio();
+            let alert_audio = noaa.then(same_audio);
             let mut sequence = 0_u64;
             let mut decimate = false;
             let result = device.run_stream(&mut |bytes| {
@@ -41,17 +53,17 @@ impl WeatherReceiver {
                     if let Some(audio) = demod.push((pair[0] as f32 - 127.5)/127.5, (pair[1] as f32 - 127.5)/127.5) {
                         samples.extend_from_slice(&audio);
                         decimate = !decimate;
-                        if decimate { mono.extend_from_slice(&demod.decoder_sample.to_le_bytes()); }
+                        if noaa && decimate { mono.extend_from_slice(&demod.decoder_sample.to_le_bytes()); }
                     }
                 }
                 // Alert decoding is independent of listening cleanup and volume/mute.
-                if !mono.is_empty() {
+                if let Some(alert_audio) = alert_audio.as_ref().filter(|_| !mono.is_empty()) {
                     let _ = alert_audio.try_send((sequence, mono));
                     sequence = sequence.wrapping_add(1);
                 }
                 sink.push(&samples); samples.clear(); StreamControl::Continue
             });
-            *report.lock().unwrap() = match result { Ok(()) => "NOAA receiver stopped".into(), Err(e) => format!("NOAA receive failed: {e}") };
+            *report.lock().unwrap() = match result { Ok(()) => format!("{band} receiver stopped"), Err(e) => format!("{band} receive failed: {e}") };
         }));
         Ok(receiver)
     }
