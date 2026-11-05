@@ -24,6 +24,20 @@ gateway = module("gateway", "container/gateway.py")
 
 
 class AudioTests(unittest.TestCase):
+    def test_default_hiss_filter_only_affects_encoder_output(self):
+        with patch.dict(audio.os.environ):
+            audio.os.environ.pop("ROSE_AUDIO_DENOISE", None)
+            default = audio.encoder_command()
+        with patch.dict(audio.os.environ, ROSE_AUDIO_DENOISE="off"):
+            self.assertNotIn("-af", audio.encoder_command())
+        with patch.dict(audio.os.environ, ROSE_AUDIO_DENOISE="hiss"):
+            command = audio.encoder_command()
+            self.assertEqual(command, default)
+            index = command.index("-af")
+            self.assertLess(command.index("-i"), index)
+            self.assertEqual(command[index + 1], "afftdn=nr=6:nf=-45")
+            self.assertLess(index, command.index("-c:a"))
+
     def test_multiple_listeners_receive_same_stream(self):
         stream = audio.Broadcast()
         first, second = stream.subscribe(), stream.subscribe()
@@ -87,6 +101,13 @@ class BuildTests(unittest.TestCase):
 
 
 class GatewayTests(unittest.TestCase):
+    def test_weather_speech_switch_requires_a_boolean(self):
+        for enabled in (True, False):
+            command = {"type": "SetWeatherSpeech", "value": enabled}
+            self.assertEqual(gateway.validate_command(command), command)
+        with self.assertRaises(ValueError):
+            gateway.validate_command({"type": "SetWeatherSpeech", "value": "false"})
+
     def test_rejects_unbounded_presets_and_programs(self):
         for kind, value in [('SavePreset', 1000000), ('SelectProgram', 8), ('SelectProgram', -1), ('SelectProgram', True)]:
             with self.assertRaises(ValueError):

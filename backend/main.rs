@@ -70,6 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         *progress.lock().unwrap() = (Instant::now(), "event loop / runtime metrics".into());
         app.web_tick(&ctx);
+        app.sync_listening_mode();
         if last_heartbeat.elapsed() >= Duration::from_secs(1) {
             std::fs::write(crate::runtime::run("heartbeat"), b"alive")?;
             last_heartbeat = Instant::now();
@@ -81,6 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let command = request["op"] == "command";
             if command { eprintln!("[receiver] begin {stage}"); }
             let response = app.web_request(request);
+            app.sync_listening_mode();
             if command { eprintln!("[receiver] end {stage}: status={} error={}", response["status"], response["error"]); }
             let _ = reply.send(response);
             if shutdown { break; }

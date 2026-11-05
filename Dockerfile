@@ -10,6 +10,7 @@ FROM rust:1.95-bookworm AS build
 ARG STUDIO_REF=61064d27fcb4e7a7a231b9f6aa546e59bee00084
 ARG NRSC5_REF=a5c09723b135327aeef157770caae9aebf597547
 ARG MULTIMON_REF=b5f7d71c5e9b5a76093ba55c515968dc40f92804
+ARG RNNOISE_REF=6cbfd53eb348a8d394e0757b4025c6ded34eb2b6
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake build-essential pkg-config clang libclang-dev autoconf automake libtool \
@@ -32,6 +33,12 @@ RUN git init studio && cd studio \
     && git remote add origin https://github.com/LTCAshraven/nrsc5-studio.git \
     && git fetch --depth 1 origin "$STUDIO_REF" && git checkout --detach FETCH_HEAD \
     && test "$(git rev-parse HEAD)" = "$STUDIO_REF"
+RUN git init rnnoise && cd rnnoise \
+    && git remote add origin https://github.com/xiph/rnnoise.git \
+    && git fetch --depth 1 origin "$RNNOISE_REF" && git checkout --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "$RNNOISE_REF" \
+    && ./autogen.sh && ./configure --disable-shared --enable-static --disable-examples --disable-doc \
+    && make -j2 && cp .libs/librnnoise.a /src/studio/bin/
 RUN git init nrsc5 && cd nrsc5 \
     && git remote add origin https://github.com/theori-io/nrsc5.git \
     && git fetch --depth 1 origin "$NRSC5_REF" && git checkout --detach FETCH_HEAD \
@@ -69,10 +76,11 @@ RUN mkdir -p /sources/studio/.cargo /sources/nrsc5 /sources/faad2 \
     && tar --exclude=.git --exclude=target --exclude=bin --exclude=.cargo \
        -cf - . | tar -xf - -C /sources/studio \
     && cp -a /src/nrsc5/. /sources/nrsc5/ \
+    && mkdir /sources/rnnoise && git -C /src/rnnoise archive HEAD | tar -x -C /sources/rnnoise \
     && cp -a /src/multimon-ng /sources/multimon-ng && rm -rf /sources/multimon-ng/.git \
     && cp -a /build/nrsc5/faad2-prefix/src/faad2_external/. /sources/faad2/ \
     && rm -rf /sources/nrsc5/.git /sources/faad2/.git \
-    && printf 'STUDIO_REF=%s\nNRSC5_REF=%s\nMULTIMON_REF=%s\n' "$STUDIO_REF" "$NRSC5_REF" "$MULTIMON_REF" > /sources/versions.txt
+    && printf 'STUDIO_REF=%s\nNRSC5_REF=%s\nMULTIMON_REF=%s\nRNNOISE_REF=%s\n' "$STUDIO_REF" "$NRSC5_REF" "$MULTIMON_REF" "$RNNOISE_REF" > /sources/versions.txt
 COPY Dockerfile README.md LICENSE compose.yaml /sources/dx-studio/
 COPY container/ /sources/dx-studio/container/
 COPY scripts/ /sources/dx-studio/scripts/
@@ -101,6 +109,7 @@ COPY --from=build /build/multimon/multimon-ng /usr/local/bin/multimon-ng
 COPY --from=build /src/studio/bin/libnrsc5.so /usr/lib/nrsc5-studio/libnrsc5.so
 COPY --from=build /src/studio/res/map.png /usr/share/nrsc5-studio/map.png
 COPY --from=build /src/studio/LICENSE /src/studio/COPYING.GPL-3.0 /src/studio/THIRD_PARTY_NOTICES.md /usr/share/doc/nrsc5-studio/
+COPY --from=build /src/rnnoise/COPYING /usr/share/doc/rnnoise/COPYING
 COPY container/ /opt/rose/
 COPY --from=frontend /web/dist/ /var/www/rose/
 COPY README.md LICENSE /usr/share/doc/dx-studio/

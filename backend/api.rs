@@ -1,6 +1,23 @@
 
 // Appended inside app.rs: serialized mutations use upstream command handlers.
 impl Nrsc5App {
+    pub fn sync_listening_mode(&self) {
+        crate::audio::set_listening_station(self.listening_station_key(), self.wx_band && self.wx_speech);
+    }
+    pub fn listening_station_key(&self) -> u32 {
+        // Station frequencies occupy disjoint bands. Reserve four low bits for
+        // the audible subchannel so changing HD programs also clears the filter.
+        if self.wx_band {
+            if self.wx_session.as_ref().is_some_and(|w| w.running()) {
+                return ((self.wx_frequency * 1000.0).round() as u32) << 4;
+            }
+        } else if self.app_state.is_streaming && self.retune_task.is_none() {
+            let khz = (self.app_state.frequency_mhz * 1000.0).round() as u32;
+            return (khz << 4) | self.app_state.active_speaker.unwrap_or(self.app_state.selected_program) as u32;
+        }
+        0
+    }
+
     pub fn web_init(&mut self) -> Result<(), String> {
         if let Ok(source) = std::env::var("ROSE_SDR_BINDING") {
             let binding: serde_json::Value = serde_json::from_str(&source).map_err(|e| e.to_string())?;
@@ -12,6 +29,7 @@ impl Nrsc5App {
         if let Ok(text) = std::fs::read_to_string(crate::runtime::data("web-band.json")) {
             if let Ok(saved) = serde_json::from_str::<serde_json::Value>(&text) {
                 self.wx_band = saved["band"] == "noaa";
+                self.wx_speech = saved["weather_speech"].as_bool().unwrap_or(false);
                 self.am_band = saved["band"] == "am";
                 self.am_converter = saved["am_converter"].as_bool().unwrap_or(true);
                 self.am_direct_sampling = saved["am_direct_sampling"].as_i64().filter(|v| (0..=2).contains(v)).unwrap_or(0) as i32;
@@ -33,7 +51,7 @@ impl Nrsc5App {
 
     pub fn web_save(&mut self) {
         if !self.am_band && !self.wx_band { self.fm_frequency = self.app_state.frequency_mhz; }
-        let saved = serde_json::json!({"band":if self.wx_band {"noaa"} else if self.am_band {"am"} else {"fm"},"frequency":self.wx_frequency,"am_frequency":self.am_frequency,"am_converter":self.am_converter,"am_direct_sampling":self.am_direct_sampling,"fm_frequency":self.fm_frequency});
+        let saved = serde_json::json!({"band":if self.wx_band {"noaa"} else if self.am_band {"am"} else {"fm"},"frequency":self.wx_frequency,"weather_speech":self.wx_speech,"am_frequency":self.am_frequency,"am_converter":self.am_converter,"am_direct_sampling":self.am_direct_sampling,"fm_frequency":self.fm_frequency});
         if std::fs::write(crate::runtime::data("web-band.json.tmp"), saved.to_string()).is_ok() {
             let _ = std::fs::rename(crate::runtime::data("web-band.json.tmp"), crate::runtime::data("web-band.json"));
         }
@@ -185,6 +203,7 @@ impl Nrsc5App {
         self.weather_state(&mut state);
         self.am_state(&mut state);
         state["source_managed"] = json!(std::env::var_os("ROSE_SDR_BINDING").is_some());
+        state["whistle_hz"] = json!(crate::audio::whistle_hz(self.listening_station_key()));
         state
     }
 }

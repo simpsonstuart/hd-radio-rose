@@ -20,6 +20,35 @@ This should remove desktop-rendering and screen-streaming overhead. It does not
 reduce the underlying SDR/DSP work; actual CPU, RAM and latency improvements must
 be measured on the ROSE. MP3 playback still has browser-dependent buffering.
 
+SDR playback builds an **80 ms audio reserve** at startup and after the decoded
+audio queue runs dry. This gives the decoder time to deliver its next burst
+while earlier samples play. A short final burst waits at most four 20 ms ticks
+before playback resumes. RF dropouts that exhaust the reserve are still audible.
+
+The shared SDR listening stream uses a 6 dB spectral hiss filter by default.
+To bypass it for comparison, set `ROSE_AUDIO_DENOISE=off` in the container
+environment (or Compose `.env`) and recreate the container. If an existing
+configuration explicitly sets `off`, change it to `hiss` to enable cleanup. The setting
+applies to every SDR listening stream. Recordings and SAME decoding use the
+audio upstream of this filter.
+
+Automatic whistle reduction also runs on the shared SDR listening stream.
+Each receiver measures its tuned station five times per second and watches
+for a narrow peak between roughly 600 Hz and 5.2 kHz. After repeated
+detections it applies one narrow cut, displays the center frequency on
+the **Listen** page, and releases the cut when the peak disappears. Retuning
+or switching HD programs starts a fresh measurement. A sustained musical note
+can also trigger the filter. To bypass whistle reduction independently of
+the hiss filter, set `ROSE_AUDIO_WHISTLE=off` and recreate the container.
+
+For NOAA weather radio, open **Listen** and toggle **AI speech cleanup (all listeners)**
+while playing a station. This receiver setting starts off and is saved across restarts.
+The listening stream runs automatic whistle reduction first, then local RNNoise
+speech cleanup. For 450 ms after stronger speech, the mix brings back some of the
+speech-band audio to preserve quiet phrase endings. The hiss filter runs in the
+encoder. Allow for the browser’s audio buffer when comparing the switch positions.
+SAME alert decoding uses the separate audio feed upstream of listening cleanup.
+
 HackRF capture uses **8 MS/s** with a 1.75 MHz baseband filter, then software
 resampling to the decoder's exact **1.488375 MS/s**. RTL-SDR still captures at the
 decoder rate directly. The HackRF path therefore requires more USB bandwidth and

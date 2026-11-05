@@ -104,13 +104,22 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def main():
-    process = subprocess.Popen([
+def encoder_command():
+    denoise = os.environ.get("ROSE_AUDIO_DENOISE", "hiss").strip().lower()
+    if denoise not in {"off", "hiss"}:
+        raise ValueError("ROSE_AUDIO_DENOISE must be off or hiss")
+    filters = ["-af", "afftdn=nr=6:nf=-45"] if denoise == "hiss" else []
+    return [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin",
         "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", f"tcp://127.0.0.1:{port('PCM', 8092)}",
+        *filters,
         "-c:a", "libmp3lame", "-b:a", "160k", "-write_xing", "0",
         "-id3v2_version", "0", "-flush_packets", "1", "-f", "mp3", "pipe:1",
-    ], stdout=subprocess.PIPE)
+    ]
+
+
+def main():
+    process = subprocess.Popen(encoder_command(), stdout=subprocess.PIPE)
     from gateway import make_handler
     from same_alerts import service
     service.start()

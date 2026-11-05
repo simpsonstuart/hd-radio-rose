@@ -54,7 +54,7 @@ def fm_channel(value):
 
 UNITS = {"Start", "Stop", "RefreshSdrDevices", "ResetSdrConfig", "ClearGainCache",
          "StartRecording", "StopRecording", "ClearCollage", "ClearArtBlocklist", "ClearLog"}
-BOOLEANS = {"SetAmConverter", "SetShowHd5Hd8", "SetMute", "SetAnalogFallbackStereo", "SetAnalogFallbackRdsEnabled",
+BOOLEANS = {"SetAmConverter", "SetWeatherSpeech", "SetShowHd5Hd8", "SetMute", "SetAnalogFallbackStereo", "SetAnalogFallbackRdsEnabled",
             "SetSpectrumSmoothingEnabled", "SetRecordingSubfolderPerStation", "SetCollageSecondaryClickFallback"}
 NUMBERS = {"TuneMhz": (87.9, 107.9, False), "SelectProgram": (0, 7, True),
            "SavePreset": (0, 47, True), "RecallPreset": (0, 47, True), "ClearPreset": (0, 47, True),

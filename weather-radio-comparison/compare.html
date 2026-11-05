@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Weather radio listening comparison</title>
+<style>
+  html { color-scheme: dark; font: 105%/1.5 system-ui, sans-serif; background: #14232a; color: #f0f5f5 }
+  main { max-width: 42rem; margin: 12vh auto; padding: 1.2rem }
+  fieldset { display: flex; flex-wrap: wrap; gap: 1rem; padding: .9rem; border: 1px solid #71868a }
+  audio { width: 100%; margin: 1.2rem 0 }
+  input { accent-color: #61cabe }
+</style>
+<main>
+  <h1>Weather radio listening comparison</h1>
+  <p>Play the ten-second passage, then switch versions at any point. The passage loops at the same playback gain.</p>
+  <fieldset><legend>Version</legend>
+    <label><input name="clip" type="radio" value="original"> Original</label>
+    <label><input name="clip" type="radio" value="hiss-filter"> Hiss filter</label>
+    <label><input name="clip" type="radio" value="ai-speech"> First AI mix</label>
+    <label><input name="clip" type="radio" value="ai-speech-revised"> Revised AI mix</label>
+    <label><input name="clip" type="radio" value="ai-speech-whistle-reduced" checked> Revised AI + whistle reduction</label>
+  </fieldset>
+  <audio controls loop preload="auto" src="ai-speech-whistle-reduced.wav"></audio>
+  <p>Source: NOAA Weather Radio Org’s “Very Weak Reception” example.</p>
+</main>
+<script>
+  const player = document.querySelector('audio');
+  let switching = false, position = 0, resume = false;
+  document.querySelector('fieldset').addEventListener('change', event => {
+    if (!switching) {
+      position = player.currentTime;
+      resume = !player.paused;
+    }
+    switching = true;
+    player.onloadedmetadata = () => {
+      player.currentTime = position;
+      switching = false;
+      if (resume) player.play().catch(() => {});
+    };
+    player.src = event.target.value + '.wav';
+  });
+</script>
+</html>

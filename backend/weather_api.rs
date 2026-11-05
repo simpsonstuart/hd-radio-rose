@@ -35,10 +35,14 @@ impl Nrsc5App {
             return Some(self.web_state());
         }
         if !self.wx_band {
-            return if kind == "TuneWeather" { Some(json!({"error":"Select NOAA Weather first"})) } else { None };
+            return if matches!(kind, "TuneWeather" | "SetWeatherSpeech") { Some(json!({"error":"Select NOAA Weather first"})) } else { None };
         }
         let running = self.wx_session.as_ref().is_some_and(|w| w.running());
         let result: Result<(), String> = match kind {
+            "SetWeatherSpeech" => match c["value"].as_bool() {
+                Some(enabled) => { self.wx_speech = enabled; Ok(()) }
+                None => Err("Expected a boolean for weather speech cleanup".into()),
+            },
             "Start" => if running { Ok(()) } else { self.start_weather() },
             "Stop" => { self.wx_session.take(); self.audio_player.sink().clear(); Ok(()) },
             "TuneWeather" => {
@@ -75,6 +79,7 @@ impl Nrsc5App {
         use serde_json::json;
         state["band"] = json!(if self.wx_band {"noaa"} else {"fm"});
         if !self.wx_band { return; }
+        state["weather_speech"] = json!(self.wx_speech);
         let running = self.wx_session.as_ref().is_some_and(|w| w.running());
         state["frequency"] = json!(self.wx_frequency);
         state["streaming"] = json!(running);

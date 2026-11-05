@@ -8,6 +8,8 @@ services:
       - "8080:8080"
     environment:
       WEB_USER: radio
+      ROSE_AUDIO_DENOISE: ${ROSE_AUDIO_DENOISE:-hiss}
+      ROSE_AUDIO_WHISTLE: ${ROSE_AUDIO_WHISTLE:-auto}
       WEB_PASSWORD: ${WEB_PASSWORD:?Set WEB_PASSWORD in .env}
     volumes:
       - radio-data:/data
