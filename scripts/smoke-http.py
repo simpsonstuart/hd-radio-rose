@@ -68,6 +68,12 @@ try:
     raise AssertionError('Idle NOAA receiver accepted tuning')
 except urllib.error.HTTPError as error:
     assert error.code == 409
+dmr = json.loads(request('/api/command', {'type':'SelectBand','value':'dmr'}))
+assert dmr['band'] == 'dmr' and not dmr['streaming']
+dmr = json.loads(request('/api/command', {'type':'TuneDmr','value':438_612_500}))
+assert dmr['frequency'] == 438.6125
+dmr = json.loads(request('/api/command', {'type':'SetDmrSlot','value':2}))
+assert dmr['dmr_slot'] == 2
 gmrs = json.loads(request('/api/command', {'type':'SelectBand','value':'gmrs'}))
 assert gmrs['band'] == 'gmrs' and gmrs['frequency'] == 462.5625
 channels = gmrs['gmrs_channels_hz']

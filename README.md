@@ -336,6 +336,16 @@ several minutes. Cancel stops further tuning (an already submitted retune may
 finish). Seeking runs in the browser, so keep the page open. Tuning stops any
 active recording, as with ordinary station changes.
 
+### DMR reception
+
+To test with a handheld, use a clear-voice simplex channel programmed into your radio.
+
+1. In **Listen**, select **DMR** on an SDR receiver. Enter the handheld’s transmit frequency in MHz and click **Tune**. The tuner accepts 136–174 MHz and 400–480 MHz.
+2. Select **Slot 1** for a direct handheld test. The decoder sends mobile-station bursts to slot 1. When listening to a repeater or duplex hotspot output, tune its transmit frequency and select the time slot carrying the call.
+3. Click **Start receiver**, then **Listen**. Make a short voice call on the handheld. Watch for **DMR synchronized** and listen for your words. Silence between calls is expected. If the receiver stays at **Waiting for DMR sync**, check the transmit frequency, turn off privacy on the test channel, and try low power with some separation between the handheld and the SDR.
+
+Each receiver remembers its DMR frequency and slot. DSDcc demodulates the digital voice stream and mbelib decodes the speech for browser playback. This mode receives one conventional DMR channel at a time. Hotspot forwarding would require a separate outbound connection that carries DMR frames and call information. This receiver only listens.
+
 ### GMRS reception
 
 In **Listen**, select **GMRS** and start the receiver. Choose a U.S. channel
@@ -539,7 +549,7 @@ receiver capability.
 ### Sources and independent receivers
 
 The **Sources & receivers** panel manages up to eight independent source sessions (SDR or HDHomeRun tuner).
-Each has its own engine process, audio encoder/stream, FM/AM/NOAA/GMRS band settings,
+Each has its own engine process, audio encoder/stream, FM/AM/NOAA/GMRS/DMR band settings,
 presets, gain and converter settings, artwork, song history, recordings and SAME
 alert decoder. A failed worker is marked failed and its companion service is
 stopped; the manager and other receivers continue. Recovery is explicit through
@@ -555,7 +565,7 @@ Before adding a second source:
 3. Save it and start its session again.
 4. Add another source with its own ID, name, connection, and optional location,
    antenna description and purpose. Start its session and open its workspace.
-5. Choose FM, AM, NOAA or GMRS and use **Start receiver** and **Listen** as before.
+5. Choose FM, AM, NOAA, GMRS or DMR and use **Start receiver** and **Listen** as before.
 
 **Start session** launches the engine and audio services; **Start receiver** opens
 hardware and begins RF reception. Enabled sessions return after a container

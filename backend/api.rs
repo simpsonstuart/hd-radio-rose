@@ -7,7 +7,7 @@ impl Nrsc5App {
     pub fn listening_station_key(&self) -> u32 {
         // Station frequencies occupy disjoint bands. Reserve four low bits for
         // the audible subchannel so changing HD programs also clears the filter.
-        if self.wx_band || self.gmrs_band {
+        if self.is_narrowband() {
             if self.wx_session.as_ref().is_some_and(|w| w.running()) {
                 return ((self.narrowband_frequency() * 1000.0).round() as u32) << 4;
             }
@@ -28,6 +28,9 @@ impl Nrsc5App {
         self.fm_frequency = self.app_state.frequency_mhz;
         if let Ok(text) = std::fs::read_to_string(crate::runtime::data("web-band.json")) {
             if let Ok(saved) = serde_json::from_str::<serde_json::Value>(&text) {
+                self.dmr_band = saved["band"] == "dmr";
+                self.dmr_hz = crate::weather::dmr_hz(&saved["dmr_hz"]).unwrap_or(446_000_000);
+                self.dmr_slot = saved["dmr_slot"].as_i64().filter(|v| (1..=2).contains(v)).unwrap_or(1) as i32;
                 self.gmrs_band = saved["band"] == "gmrs";
                 self.gmrs_channel = crate::weather::gmrs_channel(&saved["gmrs_channel"]).unwrap_or(1);
                 self.wx_band = saved["band"] == "noaa";
@@ -52,8 +55,8 @@ impl Nrsc5App {
     }
 
     pub fn web_save(&mut self) {
-        if !self.am_band && !self.wx_band && !self.gmrs_band { self.fm_frequency = self.app_state.frequency_mhz; }
-        let saved = serde_json::json!({"gmrs_channel":self.gmrs_channel,"band":if self.gmrs_band {"gmrs"} else if self.wx_band {"noaa"} else if self.am_band {"am"} else {"fm"},"frequency":self.wx_frequency,"weather_speech":self.wx_speech,"am_frequency":self.am_frequency,"am_converter":self.am_converter,"am_direct_sampling":self.am_direct_sampling,"fm_frequency":self.fm_frequency});
+        if !self.am_band && !self.is_narrowband() { self.fm_frequency = self.app_state.frequency_mhz; }
+        let saved = serde_json::json!({"dmr_slot":self.dmr_slot,"dmr_hz":self.dmr_hz,"gmrs_channel":self.gmrs_channel,"band":if self.dmr_band {"dmr"} else if self.gmrs_band {"gmrs"} else if self.wx_band {"noaa"} else if self.am_band {"am"} else {"fm"},"frequency":self.wx_frequency,"weather_speech":self.wx_speech,"am_frequency":self.am_frequency,"am_converter":self.am_converter,"am_direct_sampling":self.am_direct_sampling,"fm_frequency":self.fm_frequency});
         if std::fs::write(crate::runtime::data("web-band.json.tmp"), saved.to_string()).is_ok() {
             let _ = std::fs::rename(crate::runtime::data("web-band.json.tmp"), crate::runtime::data("web-band.json"));
         }
@@ -94,7 +97,7 @@ impl Nrsc5App {
             "log" => json!({"entries": self.play_log.entries()}),
             "constellation" => crate::constellation::snapshot(
                 self.app_state.is_streaming && self.app_state.currently_synced
-                && !self.wx_band && !self.gmrs_band && self.retune_task.is_none()),
+                && !self.is_narrowband() && self.retune_task.is_none()),
             "spectrum" => {
                 if let Some(tap) = &self.app_state.spectrum_tap {
                     tap.snapshot_into(&mut self.app_state.spectrum_snapshot);

@@ -6,7 +6,7 @@ export const media = (path) => path ? receiverUrl(`/api/media?path=${encodeURICo
 export const recordingUrl = (name) => receiverUrl(`/api/recording?name=${encodeURIComponent(name)}`);
 export const db = (value) => Number.isFinite(value) ? value.toFixed(1) : '—';
 export const weatherChannels = [162.400,162.425,162.450,162.475,162.500,162.525,162.550];
-export const formatFrequency = (value, band='fm') => band==='am' ? Math.round(Number(value)*1000).toString() : Number(value).toFixed(band==='gmrs'?4:band==='noaa'?3:1);
+export const formatFrequency = (value, band='fm') => band==='am' ? Math.round(Number(value)*1000).toString() : Number(value).toFixed(band==='dmr'?6:band==='gmrs'?4:band==='noaa'?3:1);
 export function parseFrequency(value) {
   const text = String(value).trim();
   return fmChannel(/^\d{3,4}$/.test(text) ? Number(text) / 10 : Number(text));
@@ -18,7 +18,7 @@ export function fmChannel(value) {
     throw new Error('Enter an FM channel from 87.9 to 107.9 MHz in 0.2 MHz steps (for example, 99.1).');
   return tenths / 10;
 }
-export const digitalLocked = s => Boolean(!['noaa','gmrs'].includes(s?.band) && s?.streaming && s.synced && !s.retuning && s.config?.analog_fallback_mode !== 'analog_only');
+export const digitalLocked = s => Boolean(!['noaa','gmrs','dmr'].includes(s?.band) && s?.streaming && s.synced && !s.retuning && s.config?.analog_fallback_mode !== 'analog_only');
 export const hdAvailable = (s, index) => digitalLocked(s) && Boolean(s.station?.programs?.[index]);
 export function groupPlays(entries) {
   const groups = new Map();

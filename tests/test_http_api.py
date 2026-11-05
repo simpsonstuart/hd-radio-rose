@@ -120,9 +120,21 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(gateway.validate_command({'type':'TuneWeather','value':khz/1000})['value'],khz/1000)
         for value in [99.1,162.41,162.399,162.575,True]:
             with self.assertRaises(ValueError): gateway.validate_command({'type':'TuneWeather','value':value})
-        for band in ['fm','noaa','gmrs','am']:
+        for band in ['fm','noaa','gmrs','dmr','am']:
             self.assertEqual(gateway.validate_command({'type':'SelectBand','value':band})['value'],band)
         with self.assertRaises(ValueError): gateway.validate_command({'type':'SelectBand','value':'ssb'})
+
+    def test_dmr_frequency_and_slot_validation(self):
+        for value in [136_000_000, 174_000_000, 400_000_000, 438_612_500, 480_000_000]:
+            self.assertEqual(gateway.validate_command({'type':'TuneDmr','value':value})['value'], value)
+        for value in [True, 446.0, 175_000_000, 480_000_001, 446_000_000.5]:
+            with self.assertRaises(ValueError):
+                gateway.validate_command({'type':'TuneDmr','value':value})
+        for slot in [1, 2]:
+            self.assertEqual(gateway.validate_command({'type':'SetDmrSlot','value':slot})['value'], slot)
+        for slot in [True, 0, 3, 1.5]:
+            with self.assertRaises(ValueError):
+                gateway.validate_command({'type':'SetDmrSlot','value':slot})
 
     def test_gmrs_channels_and_repeater_inputs(self):
         for channel in range(1, 31):

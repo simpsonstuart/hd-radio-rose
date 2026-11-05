@@ -10,6 +10,8 @@ FROM rust:1.95-bookworm AS build
 ARG STUDIO_REF=61064d27fcb4e7a7a231b9f6aa546e59bee00084
 ARG NRSC5_REF=a5c09723b135327aeef157770caae9aebf597547
 ARG MULTIMON_REF=b5f7d71c5e9b5a76093ba55c515968dc40f92804
+ARG DSDCC_REF=5809057a448f7069c981252100c41f3e3862599e
+ARG MBELIB_REF=9a04ed5c78176a9965f3d43f7aa1b1f5330e771f
 ARG RNNOISE_REF=6cbfd53eb348a8d394e0757b4025c6ded34eb2b6
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,6 +22,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcursor-dev libxinerama-dev libgl1-mesa-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+COPY backend/dmr.cpp /build/dmr.cpp
+RUN git init mbelib && git -C mbelib fetch --depth 1 https://github.com/szechyjs/mbelib.git "$MBELIB_REF" \
+    && git -C mbelib checkout --detach FETCH_HEAD \
+    && cmake -S mbelib -B /build/mbe -DCMAKE_INSTALL_LIBDIR=lib -DDISABLE_TEST=ON \
+    && cmake --build /build/mbe -j2 && cmake --install /build/mbe \
+    && git init dsdcc && git -C dsdcc fetch --depth 1 https://github.com/f4exb/dsdcc.git "$DSDCC_REF" \
+    && git -C dsdcc checkout --detach FETCH_HEAD \
+    && cmake -S dsdcc -B /build/dsdcc -DCMAKE_INSTALL_LIBDIR=lib -DUSE_MBELIB=ON -DBUILD_TOOL=OFF \
+    && cmake --build /build/dsdcc -j2 && cmake --install /build/dsdcc \
+    && g++ -shared -fPIC -O2 -DDSD_USE_MBELIB -I/src/dsdcc /build/dmr.cpp -L/usr/local/lib -ldsdcc -o /usr/local/lib/librose_dmr.so \
+    && ldconfig && ldd /usr/local/lib/libdsdcc.so | grep libmbe
 RUN git init multimon-ng && cd multimon-ng \
     && git remote add origin https://github.com/EliasOenal/multimon-ng.git \
     && git fetch --depth 1 origin "$MULTIMON_REF" && git checkout --detach FETCH_HEAD \
@@ -66,6 +79,7 @@ RUN python3 /build/scripts/build-rds-replay.py /src/studio/src/dsp/fm_analog.rs 
     && python3 /build/scripts/test-rds-replay.py /build/rds-replay
 RUN python3 /build/scripts/patch-studio.py /src/studio /build/backend
 WORKDIR /src/studio
+ENV LIBRARY_PATH=/usr/local/lib
 # Explicit toolchain bypasses upstream's floating rust-toolchain.toml.
 # Avoid -C target-cpu=native: CI's ARM CPU need not match the ROSE CPU.
 RUN cargo +1.95.0 build --locked --release --bin nrsc5-studio --features eframe/glow
@@ -76,11 +90,14 @@ RUN mkdir -p /sources/studio/.cargo /sources/nrsc5 /sources/faad2 \
     && tar --exclude=.git --exclude=target --exclude=bin --exclude=.cargo \
        -cf - . | tar -xf - -C /sources/studio \
     && cp -a /src/nrsc5/. /sources/nrsc5/ \
+    && mkdir /sources/dsdcc /sources/mbelib \
+    && git -C /src/dsdcc archive HEAD | tar -x -C /sources/dsdcc \
+    && git -C /src/mbelib archive HEAD | tar -x -C /sources/mbelib \
     && mkdir /sources/rnnoise && git -C /src/rnnoise archive HEAD | tar -x -C /sources/rnnoise \
     && cp -a /src/multimon-ng /sources/multimon-ng && rm -rf /sources/multimon-ng/.git \
     && cp -a /build/nrsc5/faad2-prefix/src/faad2_external/. /sources/faad2/ \
     && rm -rf /sources/nrsc5/.git /sources/faad2/.git \
-    && printf 'STUDIO_REF=%s\nNRSC5_REF=%s\nMULTIMON_REF=%s\nRNNOISE_REF=%s\n' "$STUDIO_REF" "$NRSC5_REF" "$MULTIMON_REF" "$RNNOISE_REF" > /sources/versions.txt
+    && printf 'STUDIO_REF=%s\nNRSC5_REF=%s\nMULTIMON_REF=%s\nRNNOISE_REF=%s\nDSDCC_REF=%s\nMBELIB_REF=%s\n' "$STUDIO_REF" "$NRSC5_REF" "$MULTIMON_REF" "$RNNOISE_REF" "$DSDCC_REF" "$MBELIB_REF" > /sources/versions.txt
 COPY Dockerfile README.md LICENSE compose.yaml /sources/dx-studio/
 COPY container/ /sources/dx-studio/container/
 COPY scripts/ /sources/dx-studio/scripts/
@@ -104,6 +121,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rtl-sdr hackrf usbutils libfftw3-single3 libopus0 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/studio/target/release/nrsc5-studio /opt/nrsc5-studio/nrsc5-studio
+COPY --from=build /usr/local/lib/librose_dmr.so /usr/local/lib/libdsdcc.so* /usr/local/lib/libmbe.so* /usr/local/lib/
+RUN ldconfig
 COPY --from=build /build/rds-replay /usr/local/bin/rds-replay
 COPY --from=build /build/multimon/multimon-ng /usr/local/bin/multimon-ng
 COPY --from=build /src/studio/bin/libnrsc5.so /usr/lib/nrsc5-studio/libnrsc5.so

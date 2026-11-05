@@ -15,6 +15,10 @@ pub fn gmrs_channel(value: &serde_json::Value) -> Option<usize> {
     let n = usize::try_from(value.as_u64()?).ok()?;
     (1..=GMRS_HZ.len()).contains(&n).then_some(n)
 }
+pub fn dmr_hz(value: &serde_json::Value) -> Option<u32> {
+    let hz = u32::try_from(value.as_u64()?).ok()?;
+    ((136_000_000..=174_000_000).contains(&hz) || (400_000_000..=480_000_000).contains(&hz)).then_some(hz)
+}
 pub fn channel_hz(mhz: f64) -> Option<u32> {
     CHANNELS.iter().copied().find(|hz| (mhz * 1e6 - *hz as f64).abs() < 1.0)
 }
@@ -22,7 +26,7 @@ pub struct WeatherReceiver {
     pub sdr: Arc<dyn Sdr>, worker: Option<JoinHandle<()>>, pub status: Arc<Mutex<String>>,
 }
 impl WeatherReceiver {
-    pub fn start(config: &AppConfig, hz: u32, noaa: bool, sink: AudioSink, tap: Option<SpectrumTap>) -> Result<Self,String> {
+    pub fn start(config: &AppConfig, hz: u32, noaa: bool, dmr_slot: Option<i32>, sink: AudioSink, tap: Option<SpectrumTap>) -> Result<Self,String> {
         let sdr: Arc<dyn Sdr> = match config.sdr.transport {
             SdrTransport::RtlTcpRemote => Arc::new(RtlTcpSdr::open(&config.sdr.effective_remote_host(), config.sdr.effective_remote_port()).map_err(|e| e.to_string())?),
             _ => Arc::new(SoapySdr::open(&config.sdr.to_args_string()).map_err(|e| e.to_string())?),
@@ -30,8 +34,10 @@ impl WeatherReceiver {
         sdr.configure(&SdrConfig {center_freq_hz:hz, sample_rate_sps:1_488_375,
             ppm_correction:config.sdr.freq_correction_ppm.round() as i32, direct_sampling:0,
             initial_gain_tenths:Some(config.manual_gain_tenths), antenna:config.sdr.antenna.clone()}).map_err(|e| e.to_string())?;
-        let band = if noaa { "NOAA weather" } else { "GMRS" };
-        let status = Arc::new(Mutex::new(format!("Receiving {band} (narrowband FM)")));
+        let band = if dmr_slot.is_some() { "DMR" } else if noaa { "NOAA weather" } else { "GMRS" };
+        let initial_status = if dmr_slot.is_some() { "Waiting for DMR sync".into() }
+            else { format!("Receiving {band} (narrowband FM)") };
+        let status = Arc::new(Mutex::new(initial_status));
         let mut receiver = Self {sdr, worker:None, status};
         receiver.set_gain(config.manual_gain_tenths)?;
         for (name, value) in &config.sdr.gains {
@@ -41,6 +47,29 @@ impl WeatherReceiver {
         if let Some(tap) = &tap { tap.set_center_freq_hz(hz as f64); }
         let device = receiver.sdr.clone(); let report = receiver.status.clone();
         receiver.worker = Some(std::thread::spawn(move || {
+            if let Some(slot) = dmr_slot {
+                let mut decoder = crate::dsp::fm_analog::DmrDemod::new(slot);
+                let mut audio = Vec::new();
+                let mut synced = false;
+                let result = device.run_stream(&mut |bytes| {
+                    if let Some(tap) = &tap { tap.feed(bytes); }
+                    for pair in bytes.chunks_exact(2) {
+                        decoder.push((pair[0] as f32 - 127.5)/127.5,
+                                     (pair[1] as f32 - 127.5)/127.5, &mut audio);
+                    }
+                    if !audio.is_empty() { sink.push(&audio); audio.clear(); }
+                    if synced != decoder.synced {
+                        synced = decoder.synced;
+                        *report.lock().unwrap() = if synced { format!("DMR synchronized · monitoring slot {slot}") }
+                            else { "Waiting for DMR sync".into() };
+                    }
+                    StreamControl::Continue
+                });
+                *report.lock().unwrap() = match result {
+                    Ok(()) => "DMR receiver stopped".into(), Err(e) => format!("DMR receive failed: {e}")
+                };
+                return;
+            }
             let mut demod = crate::dsp::fm_analog::WeatherDemod::new();
             let mut samples = Vec::with_capacity(4096);
             let alert_audio = noaa.then(same_audio);
