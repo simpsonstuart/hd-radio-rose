@@ -33,6 +33,7 @@ def patch_fm_audio(analog, adapter):
     analog = replace_once(analog, "        let left = self.deemphasis_l.push((sum + side) * squelch_gain);", "        let left = self.deemphasis_l.push(self.dc_l.push(sum + side));")
     analog = replace_once(analog, "        let right = self.deemphasis_r.push((sum - side) * squelch_gain);", "        let right = self.deemphasis_r.push(self.dc_r.push(sum - side));")
     analog = replace_once(analog, "        if !self.output_resampler.should_emit() {\n            return None;\n        }", "        let [left, right] = self.output_resampler.push([left, right])?;")
+    analog = replace_once(analog, "self.output_resampler.push([left, right])?", "self.output_resampler.push(self.noise_blend.tame_fade_hiss([left, right]))?")
     analog = replace_once(analog, "    let x = sample.clamp(-1.0, 1.0);\n    x / (1.0 + x.abs())", "    audio_soft_limit(sample)")
     return analog + "\n" + (adapter / "audio_quality.rs").read_text(encoding="utf-8")
 
@@ -221,18 +222,32 @@ def patch(root, adapter=None):
             // the amplitude winner as its fallback, not the startup gain.
             self.best_gain_idx = winner;
             self.best_mer_seen = f32::NEG_INFINITY;''')
-    agc = replace_once(agc, "    cfg: AgcConfig,\n\n    /// Index", "    cfg: AgcConfig,\n    tracking: HdTracking,\n\n    /// Index")
-    agc = replace_once(agc, "            best_gain_idx: gain_idx,", "            tracking: HdTracking::default(),\n            best_gain_idx: gain_idx,")
-    agc = replace_once(agc, "        match ev {", """        if self.phase == SearchPhase::Done || self.tracking.trial.is_some() {
+    agc = replace_once(agc, "    cfg: AgcConfig,\n\n    /// Index", "    cfg: AgcConfig,\n    tracking: HdTracking,\n    fm: FmTracking,\n\n    /// Index")
+    agc = replace_once(agc, "            best_gain_idx: gain_idx,", "            tracking: HdTracking::default(),\n            fm: FmTracking::default(),\n            best_gain_idx: gain_idx,")
+    agc = replace_once(agc, "        match ev {", """        if self.fm.analog_only { return; }
+        if matches!(ev, NrscEvent::Mer { .. } | NrscEvent::Sync { .. } | NrscEvent::Ber { .. }) {
+            self.fm.last_hd = Some(Instant::now());
+        }
+        if self.phase == SearchPhase::Done || self.tracking.trial.is_some() {
             self.observe_hd_quality(ev);
         }
         match ev {""")
     anchor = "    pub fn tick(&mut self) -> Option<AgcAction> {"
     agc = replace_once(agc, anchor, anchor + """
+        if self.fm.analog_only && self.phase != SearchPhase::AmpProbe && self.phase != SearchPhase::Done {
+            self.status = AgcStatus::Settled;
+            self.phase = SearchPhase::Done;
+            self.last_reason = "Monitoring analog FM noise".into();
+        }
+        if self.phase == SearchPhase::Done && (self.fm.analog_only || self.fm.has_feedback || self.fm.trial.is_some()) {
+            if let Some(action) = self.track_fm_gain() { return Some(action); }
+            if self.fm.analog_only || self.fm.trial.is_some() { return None; }
+        }
         if self.tracking.trial.is_some() || self.phase == SearchPhase::Done {
             return self.track_hd_gain();
         }""")
     agc += "\n" + (adapter / "hd_gain.rs").read_text(encoding="utf-8")
+    agc += "\n" + (adapter / "fm_gain.rs").read_text(encoding="utf-8")
     agc += "\n" + (adapter / "agc_tests.rs").read_text(encoding="utf-8")
     agc_path.write_text(agc, encoding="utf-8")
     ffi_path = root / "src/ffi/mod.rs"
@@ -243,6 +258,24 @@ def patch(root, adapter=None):
     ffi = ffi.replace('center_freq_hz: (frequency_mhz * 1_000_000.0) as u32,', 'center_freq_hz: (frequency_mhz as f64 * 1_000_000.0).round() as u32 + self.converter_hz,')
     ffi = replace_once(ffi, "                    let analog_stereo = analog_fallback_stereo;", "                    let am_mode = self.am_mode;\n                    let analog_stereo = analog_fallback_stereo;")
     ffi = replace_once(ffi, "let mut demod = crate::dsp::FmDemod::new();", "let mut demod = crate::dsp::fm_analog::BroadcastDemod::new(am_mode);")
+    ffi = replace_once(ffi, "            let agc_ctrl = AgcController::new(profile.agc_tenths_table, agc_cfg);", """            let mut agc_ctrl = AgcController::new(profile.agc_tenths_table, agc_cfg);
+            agc_ctrl.set_analog_only(!self.am_mode && analog_fallback_mode == crate::config::AnalogFallbackMode::AnalogOnly);""")
+    ffi = replace_once(ffi, "                    let analog_mode = analog_fallback_mode;", """                    let analog_mode = analog_fallback_mode;
+                    let fm_agc = agc.clone();""")
+    ffi = replace_once(ffi, "                        let mut last_ps: Option<String> = None;", """                        let mut last_meter = std::time::Instant::now();
+                        let mut last_ps: Option<String> = None;""")
+    ffi = replace_once(ffi, "                                    if hd_owns {\n                                        batch.clear();", """                                    if !hd_owns && last_meter.elapsed() >= std::time::Duration::from_millis(200) {
+                                        last_meter = std::time::Instant::now();
+                                        if let (Some(ctrl), Some(noise)) = (&fm_agc, demod.fm_noise_power()) {
+                                            let rails = payload.iter().filter(|&&x| x <= 1 || x >= 254).count();
+                                            let clipped = rails * 1000 > payload.len();
+                                            if let Ok(mut ctrl) = ctrl.lock() {
+                                                ctrl.observe_fm_noise(noise, clipped);
+                                            }
+                                        }
+                                    }
+                                    if hd_owns {
+                                        batch.clear();""")
     ffi = replace_once(ffi, "        let _ = apply_agc_action(sdr, &profile, &action);", '''        apply_agc_action(sdr, &profile, &action).ok_or_else(|| SdrError::SoapyCall {
             func: "set_manual_gain", detail: "Driver rejected gain or gain element unavailable; see receiver log".into(),
         })?;''')

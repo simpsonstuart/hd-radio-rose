@@ -92,6 +92,13 @@ by at least 25% and the weaker sideband's average MER drops by at most 1 dB.
 A failed trial restores the previous gain. Further trials are spaced by at
 least 30 seconds. The Signal Quality panel shows the decision and tuner readback.
 
+Analog FM uses the same **Automatic (signal search)** setting. Choose **Analog only**
+to optimize for FM, or **Automatic HD / analog** to give HD priority when it returns.
+During sustained hiss the app tests one hardware gain step, usually upward if the
+samples have headroom and downward if they show clipping. It keeps the step when
+measured FM noise power falls by at least 25% without more frequent clipping.
+Short fades are handled by the audio blend while the tuner holds its setting.
+
 Desktop window docking/floating panes are replaced with responsive web sections,
 not emulated. Native save dialogs are replaced by browser downloads. Recording
 folders are confined to `/data/recordings` (subfolders are configurable) so every

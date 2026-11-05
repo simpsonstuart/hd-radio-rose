@@ -32,6 +32,9 @@ impl AmDemod {
 // Preserve the existing audio handoff and FM decoder interface.
 pub enum BroadcastDemod { Fm(FmDemod), Am(AmDemod) }
 impl BroadcastDemod {
+    pub fn fm_noise_power(&self) -> Option<f32> {
+        match self { Self::Fm(d) => Some(d.noise_blend.noise), Self::Am(_) => None }
+    }
     pub fn new(am: bool) -> Self { if am { Self::Am(AmDemod::new()) } else { Self::Fm(FmDemod::new()) } }
     pub fn set_stereo_enabled(&mut self, enabled: bool) { if let Self::Fm(d) = self { d.set_stereo_enabled(enabled); } }
     pub fn set_rds_enabled(&mut self, enabled: bool) { if let Self::Fm(d) = self { d.set_rds_enabled(enabled); } }

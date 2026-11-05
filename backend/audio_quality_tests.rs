@@ -103,6 +103,53 @@ mod audio_quality_tests {
     }
 
     #[test]
+    fn fm_gain_meter_detects_a_fade_in_raw_iq() {
+        let mut demod = BroadcastDemod::new(false);
+        demod.set_stereo_enabled(false);
+        demod.set_rds_enabled(false);
+        let mut seed = 123u32;
+        let mut noise = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed as f64 / u32::MAX as f64 - 0.5) * 0.4
+        };
+        let mut phase = 0.0f64;
+        for (carrier, fading) in [(0.6, false), (0.015, true), (0.6, false)] {
+            for n in 0..300_000 {
+                phase += TAU * 40_000.0 / 1_488_375.0 * (TAU * 1_000.0 * n as f64 / 1_488_375.0).sin();
+                demod.push_complex((carrier * phase.cos() + noise()) as f32,
+                    (carrier * phase.sin() + noise()) as f32);
+            }
+            let measured = demod.fm_noise_power().unwrap();
+            assert_eq!(measured >= 0.0025, fading, "FM noise power {measured}");
+        }
+    }
+
+    #[test]
+    fn analog_fade_reduces_treble_and_restores_full_audio() {
+        let rate = 62_015.625;
+        let mut blend = StereoNoiseBlend::new(rate * 4.0, rate);
+        assert_eq!(blend.tame_fade_hiss([0.3, -0.2]), [0.3, -0.2]);
+        for (noise_amp, fading) in [(0.4, true), (0.0, false)] {
+            let mut energy = [0.0f64; 2];
+            for n in 0..(rate as usize * 2) {
+                for k in 0..4 {
+                    let phase = TAU * 80_000.0 * (4*n+k) as f64 / (4.0 * f64::from(rate));
+                    blend.observe(noise_amp * phase.sin() as f32);
+                }
+                let tones = [1_000.0, 12_000.0].map(|hz|
+                    (TAU * hz * n as f64 / f64::from(rate)).sin() as f32);
+                let output = blend.tame_fade_hiss(tones);
+                if n >= rate as usize {
+                    for i in 0..2 { energy[i] += f64::from(output[i]).powi(2); }
+                }
+            }
+            let [voice, treble] = energy.map(|e| (2.0 * e / f64::from(rate)).sqrt());
+            assert!(voice > 0.90);
+            if fading { assert!(treble < 0.20); } else { assert!(treble > 0.99); }
+        }
+    }
+
+    #[test]
     fn stereo_blend_rejects_noise_and_recovers_without_chattering() {
         let mut blend = StereoNoiseBlend::new(248_062.5, 62_015.625);
         let mut gain = 0.0;

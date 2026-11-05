@@ -78,6 +78,7 @@ fn audio_soft_limit(input: f32) -> f32 {
 struct StereoNoiseBlend {
     filter: Biquad, filter2: Biquad, noise: f32, noise_alpha: f32,
     gain: f32, narrow_alpha: f32, widen_alpha: f32,
+    treble_cut: f32, lowpass_alpha: f32, lowpass: [[f32; 2]; 2],
 }
 impl StereoNoiseBlend {
     fn new(mpx_rate: f32, audio_rate: f32) -> Self {
@@ -85,7 +86,9 @@ impl StereoNoiseBlend {
             filter2: Biquad::bandpass(80_000.0, 8.0, mpx_rate),
             noise_alpha: 1.0 - (-1.0 / (mpx_rate * 0.020)).exp(), gain: 0.0,
             narrow_alpha: 1.0 - (-1.0 / (audio_rate * 0.025)).exp(),
-            widen_alpha: 1.0 - (-1.0 / (audio_rate * 0.250)).exp() }
+            widen_alpha: 1.0 - (-1.0 / (audio_rate * 0.250)).exp(),
+            treble_cut: 0.0, lowpass: [[0.0; 2]; 2],
+            lowpass_alpha: 1.0 - (-std::f32::consts::TAU * 4_500.0 / audio_rate).exp() }
     }
     fn observe(&mut self, mpx: f32) {
         let noise = self.filter2.process(self.filter.process(mpx));
@@ -98,5 +101,19 @@ impl StereoNoiseBlend {
         let alpha = if target < self.gain { self.narrow_alpha } else { self.widen_alpha };
         self.gain += alpha * (target - self.gain);
         self.gain
+    }
+
+    // Start reducing treble only above the noise level that already calls
+    // for mono. Keep both filters warm so a short fade starts smoothly.
+    fn tame_fade_hiss(&mut self, mut audio: [f32; 2]) -> [f32; 2] {
+        let target = ((self.noise - 0.0025) / 0.0075).clamp(0.0, 1.0);
+        let alpha = if target > self.treble_cut { self.narrow_alpha } else { self.widen_alpha };
+        self.treble_cut += alpha * (target - self.treble_cut);
+        for (sample, state) in audio.iter_mut().zip(&mut self.lowpass) {
+            state[0] += self.lowpass_alpha * (*sample - state[0]);
+            state[1] += self.lowpass_alpha * (state[0] - state[1]);
+            *sample += self.treble_cut * (state[1] - *sample);
+        }
+        audio
     }
 }
