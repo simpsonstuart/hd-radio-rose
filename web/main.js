@@ -1,6 +1,6 @@
 import { defineAsyncComponent, createApp, ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { receiverUrl, tabs, media, recordingUrl, db, groupPlays, layoutRead, formatFrequency, weatherChannels, fmChannel, parseFrequency, parseAmFrequency, digitalLocked, hdAvailable, receiverStatus } from './model.js';
-import { drawSpectrum, drawWaterfall, drawConstellation } from './charts.js';
+import { drawSpectrum, drawWaterfall, drawConstellation, matchesTunedSpectrum } from './charts.js';
 import './style.css';
 import { seekStations } from './seek.js';
 import Sources from './sources.js';
@@ -115,18 +115,32 @@ createApp({
         clearTimeout(constellationExpiry); constellationExpiry = setTimeout(clearConstellation, remaining);
       } catch { clearConstellation(); }
     }
+    const spectrumLive = ref(false);
+    let scopeEpoch = 0;
+    function clearScopes() {
+      spectrumLive.value = false;
+      previousGeneration = -1;
+      for (const canvas of [spectrum.value, waterfall.value]) {
+        canvas?.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
     async function scopes() {
+      const epoch = scopeEpoch;
       try {
         await measuredConstellation();
         if (!isTv.value && connected.value && !document.hidden && ['Listen', 'Spectrum'].includes(active.value)) {
-          const s = await get('/api/spectrum');
-          if (s.generation !== previousGeneration) {
+          const s = await get('/api/spectrum', {signal:AbortSignal.timeout(3000)});
+          if (epoch !== scopeEpoch) return;
+          if (!matchesTunedSpectrum(state.value, s)) {
+            clearScopes();
+          } else if (s.generation !== previousGeneration) {
             drawSpectrum(spectrum.value, s.bins);
             drawWaterfall(waterfall.value, s.bins);
             previousGeneration = s.generation;
+            spectrumLive.value = true;
           }
         }
-      } catch { /* Connection state is handled by the state poll. */ }
+      } catch { if (epoch === scopeEpoch) clearScopes(); }
       finally { if (!closed) scopeTimer = setTimeout(scopes, active.value === 'Spectrum' ? 250 : 1000); }
     }
     async function toggleAudio() {
@@ -167,6 +181,11 @@ createApp({
     watch(theme, v => { document.documentElement.dataset.theme = v; localStorage.setItem('rose-theme', v); }, { immediate: true });
     watch(volume, v => { if (player.value) player.value.volume = Number(v); });
     watch(active, async () => { previousGeneration = -1; await nextTick(); details(); });
+    watch([active, connected, () => state.value?.band, () => state.value?.frequency,
+      () => state.value?.streaming, () => state.value?.retuning], () => {
+      scopeEpoch++;
+      clearScopes();
+    }, {flush:'sync'});
     watch([() => active.value, () => connected.value, () => state.value?.frequency, () => state.value?.band, () => digitalLocked(state.value)], async () => {
       clearConstellation(); await nextTick(); clearConstellation();
     });
@@ -176,7 +195,7 @@ createApp({
     });
     onUnmounted(() => { closed = true; clearConstellation(); seekCancelled = true; clearTimeout(stateTimer); clearTimeout(scopeTimer); clearInterval(detailsTimer); clearInterval(weatherTimer.value); stopAudio(); });
     return { isTv, isDmr, isGmrs, isNarrowband, accept, setSource:s=>{sourceKind.value=s.kind||'sdr';}, receiverUrl, isAm, isWeather, weatherChannels, formatFrequency, seeking, seekMessage, tuningDisabled, seek, cancelSeek: () => { seekCancelled = true; }, state, connected, error, pending, active, order, theme, frequency, audioOn, audioStatus, volume,
-      player, spectrum, waterfall, constellation, constellationUpper, constellationFrame, current, station, config, logRows, logView, query, files,
+      player, spectrum, spectrumLive, waterfall, constellation, constellationUpper, constellationFrame, current, station, config, logRows, logView, query, files,
       weatherIndex, weatherPlaying, weather, editPreset, deviceIndex, remoteHost, remotePort, remoteExtra,
       command, tune, step, toggleAudio, audioFailed, destructive, presetEdit, presetSave, selectDevice, applyRemote,
       format, time, media, recordingUrl, db, digitalLocked, hdAvailable, receiverStatus, dropTab, dragStart: t => { dragTab = t; }, tabs,
@@ -243,7 +262,7 @@ createApp({
       </template>
 
       <template v-if="active==='Spectrum'">
-        <section class="panel scope"><div class="panel-title"><span>LIVE SPECTRUM & WATERFALL</span><span>1.488375 MS/s · 1024 bins</span></div><canvas ref="spectrum" width="1024" height="260" aria-label="Live FFT spectrum"></canvas><div class="axis"><span>−744 kHz</span><span>{{formatFrequency(state.frequency,state.band)}} {{isAm?'kHz':'MHz'}}</span><span>+744 kHz</span></div><canvas ref="waterfall" width="1024" height="256" aria-label="Live waterfall"></canvas><p v-if="!state.streaming" class="muted">Start the receiver to see live I/Q measurements.</p></section>
+        <section class="panel scope"><div class="panel-title"><span>LIVE SPECTRUM & WATERFALL</span><span>1.488375 MS/s · 1024 bins</span></div><canvas ref="spectrum" width="1024" height="260" aria-label="Live FFT spectrum"></canvas><div class="axis"><span>−744 kHz</span><span>{{formatFrequency(state.frequency,state.band)}} {{isAm?'kHz':'MHz'}}</span><span>+744 kHz</span></div><canvas ref="waterfall" width="1024" height="256" aria-label="Live waterfall"></canvas><p v-if="!state.streaming" class="muted">Start the receiver to see live I/Q measurements.</p><p v-else-if="!spectrumLive" class="muted" role="status">Waiting for fresh I/Q samples at the selected frequency.</p></section>
         <div class="two-col scope-diagnostics"><section class="panel constellation-panel"><div class="panel-title"><span>CONSTELLATION</span><span>{{constellationFrame ? (constellationFrame.modulation===64?'Measured 64-QAM · AM primary':'Measured QPSK · FM') : 'Awaiting measured symbols'}}</span></div><div class="constellation-plots"><figure><figcaption>Lower sideband <span v-if="constellationFrame">· {{constellationFrame.lower.length}} samples</span></figcaption><canvas ref="constellation" width="360" height="360" aria-label="Measured lower-sideband constellation"></canvas></figure><figure><figcaption>Upper sideband <span v-if="constellationFrame">· {{constellationFrame.upper.length}} samples</span></figcaption><canvas ref="constellationUpper" width="360" height="360" aria-label="Measured upper-sideband constellation"></canvas></figure></div><p class="muted" role="status">{{constellationFrame?'Live post-equalization I/Q samples. Crosses mark ideal decision points.':isDmr?'Monitoring DMR on the selected time slot.':isNarrowband?'Analog narrowband FM has no HD constellation.':'Waiting for fresh decoder samples and HD lock.'}}</p><p class="muted">{{isAm?'Primary data carriers only; training symbols excluded.':'Data carriers only; reference carriers excluded.'}} Fixed axes preserve amplitude distortion.</p></section><section class="panel"><div class="panel-title"><span>GAIN CONTROLLER</span></div><dl v-if="state.agc"><template v-for="(v,k) in state.agc"><dt>{{k.replaceAll('_',' ')}}</dt><dd>{{format(v)}}</dd></template></dl><p v-else class="empty">AGC telemetry appears when tuning.</p></section></div>
       </template>
 

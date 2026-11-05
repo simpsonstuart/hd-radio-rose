@@ -41,6 +41,42 @@ def patch_fm_audio(analog, adapter):
 def patch(root, adapter=None):
     root = Path(root)
     adapter = Path(adapter or Path(__file__).resolve().parents[1] / "backend")
+    spectrum_path = root / "src/dsp/spectrum.rs"
+    spectrum = spectrum_path.read_text(encoding="utf-8")
+    spectrum = replace_once(spectrum, "            g.center_freq_hz = hz;", """            g.center_freq_hz = hz;
+            g.last_fft_at = None;
+            g.samples_have = 0;
+            g.spectrum_db.fill(DB_FLOOR);
+            g.waterfall.fill(0);
+            g.waterfall_head = 0;""")
+    # USB short reads can span an FFT window. Keep partial I/Q across callbacks.
+    begin = spectrum.index("        if bytes.len() < 2 * FFT_SIZE")
+    end = spectrum.index("        let now = Instant::now();", begin)
+    spectrum = spectrum[:begin] + spectrum[end:]
+    begin = spectrum.index("        g.last_fft_at = Some(now);")
+    end = spectrum.index("        // Compute FFT in place.", begin)
+    spectrum = spectrum[:begin] + """        let pairs = bytes.len() / 2;
+        let start = pairs.saturating_sub(FFT_SIZE);
+        if pairs >= FFT_SIZE { g.samples_have = 0; }
+        for pair in bytes[2 * start..].chunks_exact(2) {
+            let n = g.samples_have;
+            let scale = g.window[n] / 127.5;
+            g.samples[n] = Complex::new((pair[0] as f32 - 127.5) * scale,
+                                        (pair[1] as f32 - 127.5) * scale);
+            g.samples_have += 1;
+            if g.samples_have == FFT_SIZE { break; }
+        }
+        if g.samples_have < FFT_SIZE { return; }
+        g.last_fft_at = Some(now);
+
+""" + spectrum[end:]
+    spectrum = replace_once(spectrum, "        out.spectrum_db.copy_from_slice(&g.spectrum_db);", """        if g.last_fft_at.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2)) {
+            out.spectrum_db.copy_from_slice(&g.spectrum_db);
+        } else {
+            out.spectrum_db.clear();
+        }""")
+    spectrum += "\n" + (adapter / "spectrum_tests.rs").read_text(encoding="utf-8")
+    spectrum_path.write_text(spectrum, encoding="utf-8")
     app = (root / "src/app.rs").read_text(encoding="utf-8")
     app = replace_once(app, "pub struct Nrsc5App {", "pub struct Nrsc5App {\n    dmr_band: bool,\n    dmr_hz: u32,\n    dmr_slot: i32,\n    gmrs_band: bool,\n    gmrs_channel: usize,\n    wx_band: bool,\n    wx_speech: bool,\n    am_band: bool,\n    am_frequency: f64,\n    fm_frequency: f32,\n    am_converter: bool,\n    am_direct_sampling: i32,\n    wx_frequency: f64,\n    wx_session: Option<crate::weather::WeatherReceiver>,")
     app = replace_once(app, "        let mut app = Self {", "        let mut app = Self {\n            am_band: false, am_frequency: 1.0, fm_frequency: 101.1, am_converter: true, am_direct_sampling: 0, dmr_band: false, dmr_hz: 446_000_000, dmr_slot: 1, gmrs_band: false, gmrs_channel: 1, wx_band: false, wx_speech: false, wx_frequency: 162.400, wx_session: None,")
@@ -162,23 +198,55 @@ def patch(root, adapter=None):
     end = soapy.index("\n\n", begin)
     soapy = soapy[:begin] + '            if self.driver != "hackrf" {\n' + soapy[begin:end] + '\n            }' + soapy[end:]
     # Direct sampling must be selected before tuning below the tuner's range.
-    # Always send zero too, restoring tuner mode after AM on a shared device.
+    # Restore tuner mode after AM, but avoid reinitializing a tuner already
+    # in normal mode. librtlsdr's "off" setter also reprograms the tuner.
     begin = soapy.index("        // Direct sampling mode is RTL-SDR-specific.")
     end = soapy.index("        // SDRplay (RSP1A", begin)
     soapy = soapy[:begin] + soapy[end:]
     anchor = "        self.write_configure_marker(cfg);"
     soapy = replace_once(soapy, anchor, anchor + '''
         if self.driver == "rtlsdr" {
-            self.device.write_setting("direct_samp", &cfg.direct_sampling.to_string())
-                .map_err(|e| SdrError::SoapyCall {
-                    func: "write_setting(direct_samp)", detail: e.to_string(),
-                })?;
+            let mode = cfg.direct_sampling.to_string();
+            if self.device.read_setting("direct_samp").ok().as_deref() != Some(mode.as_str()) {
+                self.device.write_setting("direct_samp", &mode)
+                    .map_err(|e| SdrError::SoapyCall {
+                        func: "write_setting(direct_samp)", detail: e.to_string(),
+                    })?;
+            }
         } else if cfg.direct_sampling != 0 {
             return Err(SdrError::SoapyCall {
                 func: "direct_sampling", detail: "Direct sampling requires RTL-SDR".into(),
             });
         }
 ''')
+    # librtlsdr can log a PLL warning during initialization as well as the
+    # requested tune. Mark the RF call so the receiver log distinguishes them.
+    anchor = "        self.device\n            .set_frequency(RX, CH, cfg.center_freq_hz as f64, \"\")"
+    soapy = replace_once(soapy, anchor, '''        if self.driver == "rtlsdr" {
+            eprintln!("[sdr] begin RTL RF tune to {} Hz (direct sampling {})",
+                cfg.center_freq_hz, cfg.direct_sampling);
+        }
+''' + anchor)
+    anchor = "        // PPM correction"
+    soapy = replace_once(soapy, anchor, '''        if self.driver == "rtlsdr" {
+            eprintln!("[sdr] RTL RF tune call returned for {} Hz", cfg.center_freq_hz);
+        }
+''' + anchor)
+    anchor = "        self.write_configure_diagnostics(cfg);"
+    soapy = replace_once(soapy, anchor, anchor + """
+        if self.driver == "rtlsdr" {
+            let requested = f64::from(cfg.center_freq_hz);
+            if let Ok(actual) = self.device.frequency(RX, CH) {
+                // Allow rounding within one displayed FFT bin.
+                if actual > 0.0 && (actual - requested).abs() > f64::from(cfg.sample_rate_sps) / 1024.0 {
+                    return Err(SdrError::SoapyCall {
+                        func: "set_frequency",
+                        detail: format!("requested {requested:.0} Hz, RTL-SDR reports {actual:.0} Hz"),
+                    });
+                }
+            }
+        }
+""")
     soapy_path.write_text(soapy, encoding="utf-8")
     rtl_path = root / "src/sdr/rtltcp.rs"
     rtl = rtl_path.read_text(encoding="utf-8")

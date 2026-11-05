@@ -1,4 +1,9 @@
 import { waveformColor } from './model.js';
+export function matchesTunedSpectrum(state, frame) {
+  return Boolean(state?.streaming && !state.retuning && frame?.bins?.length &&
+    Number.isFinite(frame.center_hz) &&
+    Math.abs(frame.center_hz - state.frequency * 1e6) < (state.band === 'fm' ? 10 : 0.5));
+}
 export function drawSpectrum(canvas, bins) {
   if (!canvas || !bins?.length) return;
   const c = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
