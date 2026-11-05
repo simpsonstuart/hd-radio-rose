@@ -16,6 +16,8 @@ def replace_once(text, before, after):
 
 
 def patch_fm_audio(analog, adapter):
+    # Sharpen the analog channel edge before decimation and FM detection.
+    analog = replace_once(analog, "const CHANNEL_TAPS: usize = 47;", "const CHANNEL_TAPS: usize = 95;")
     analog = replace_once(analog, "const AUDIO_TAPS: usize = 63;", "const AUDIO_TAPS: usize = 191;")
     analog = replace_once(analog, "        assert!((emits - expected).abs() <= 24);", "        let warmup = ((super::CHANNEL_TAPS + super::AUDIO_TAPS * super::CHANNEL_DECIM) as f64\n            * super::DEFAULT_SAMPLE_RATE_HZ as f64 / super::SDR_SAMPLE_RATE_HZ as f64).ceil() as i32;\n        assert!((emits - expected).abs() <= warmup + 2);")
     begin = analog.index("/// Low-level squelch threshold")
@@ -219,6 +221,18 @@ def patch(root, adapter=None):
             // the amplitude winner as its fallback, not the startup gain.
             self.best_gain_idx = winner;
             self.best_mer_seen = f32::NEG_INFINITY;''')
+    agc = replace_once(agc, "    cfg: AgcConfig,\n\n    /// Index", "    cfg: AgcConfig,\n    tracking: HdTracking,\n\n    /// Index")
+    agc = replace_once(agc, "            best_gain_idx: gain_idx,", "            tracking: HdTracking::default(),\n            best_gain_idx: gain_idx,")
+    agc = replace_once(agc, "        match ev {", """        if self.phase == SearchPhase::Done || self.tracking.trial.is_some() {
+            self.observe_hd_quality(ev);
+        }
+        match ev {""")
+    anchor = "    pub fn tick(&mut self) -> Option<AgcAction> {"
+    agc = replace_once(agc, anchor, anchor + """
+        if self.tracking.trial.is_some() || self.phase == SearchPhase::Done {
+            return self.track_hd_gain();
+        }""")
+    agc += "\n" + (adapter / "hd_gain.rs").read_text(encoding="utf-8")
     agc += "\n" + (adapter / "agc_tests.rs").read_text(encoding="utf-8")
     agc_path.write_text(agc, encoding="utf-8")
     ffi_path = root / "src/ffi/mod.rs"
@@ -236,6 +250,17 @@ def patch(root, adapter=None):
         raise RuntimeError("Upstream direct sampling configuration changed")
     ffi = ffi.replace("                    direct_sampling: 0,", "                    direct_sampling: self.direct_sampling,")
     ffi = ffi.replace("                    initial_gain_tenths,", "                    initial_gain_tenths: if self.direct_sampling != 0 { None } else { initial_gain_tenths },")
+    # A rejected probe must never be judged or cached as an applied gain.
+    write = "let _ = apply_agc_action(&sdr_for_agc, &agc_profile, &action);"
+    if ffi.count(write) != 2:
+        raise RuntimeError("Upstream AGC driver writes changed")
+    ffi = ffi.replace(write, """if apply_agc_action(&sdr_for_agc, &agc_profile, &action).is_none() {
+                            if let Ok(mut ctrl) = agc_for_driver.lock() {
+                                ctrl.gain_write_failed(&action);
+                            }
+                            handoff_for_agc.set_agc_ready(true);
+                            break;
+                        }""")
     ffi_path.write_text(ffi, encoding="utf-8")
     # Surface driver rejection instead of silently accepting ineffective controls.
     app_path = root / "src/app.rs"

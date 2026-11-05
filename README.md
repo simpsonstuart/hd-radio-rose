@@ -84,6 +84,14 @@ rather than reimplementing the decoder. The frontend exposes these capabilities:
 | Opus recording | Lock to one HD channel while listening to another, file rotation, station subfolders, browser downloads |
 | Appearance / workspace | Responsive light/dark interface; reorder sections, preferences stored per browser |
 
+For weak FM HD reception, select **Settings → Gain & Reception → Automatic (signal search)**.
+After the startup search, three or more consecutive BER reports at or above 1%
+with fresh MER readings can trigger a one-step tuner gain trial. The controller
+tries lower gain first when available. It keeps the change if average BER falls
+by at least 25% and the weaker sideband's average MER drops by at most 1 dB.
+A failed trial restores the previous gain. Further trials are spaced by at
+least 30 seconds. The Signal Quality panel shows the decision and tuner readback.
+
 Desktop window docking/floating panes are replaced with responsive web sections,
 not emulated. Native save dialogs are replaced by browser downloads. Recording
 folders are confined to `/data/recordings` (subfolders are configurable) so every

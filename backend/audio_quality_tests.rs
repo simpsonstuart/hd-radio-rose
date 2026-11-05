@@ -3,6 +3,27 @@ mod audio_quality_tests {
     use super::*;
     const TAU: f64 = std::f64::consts::TAU;
 
+    #[test]
+    fn analog_channel_preserves_deviation_and_rejects_adjacent_energy() {
+        let rate = SDR_SAMPLE_RATE_HZ as f64;
+        let taps = lowpass_kernel(CHANNEL_TAPS, CHANNEL_CUTOFF_HZ / rate as f32);
+        let response = |hz: f64| {
+            let (mut i, mut q) = (0.0, 0.0);
+            for (n, &tap) in taps.iter().enumerate() {
+                let phase = TAU * hz * n as f64 / rate;
+                i += f64::from(tap) * phase.cos();
+                q += f64::from(tap) * phase.sin();
+            }
+            20.0 * i.hypot(q).log10()
+        };
+        for hz in (0..=75_000).step_by(500) {
+            assert!(response(hz as f64).abs() < 0.25, "passband at {hz} Hz");
+        }
+        for hz in (125_000..=275_000).step_by(500) {
+            assert!(response(hz as f64) < -44.0, "adjacent channel at {hz} Hz");
+        }
+    }
+
     fn rms(samples: &[f64]) -> f64 {
         (samples.iter().map(|v| v * v).sum::<f64>() / samples.len() as f64).sqrt()
     }
