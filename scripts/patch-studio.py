@@ -77,6 +77,10 @@ def patch(root, adapter=None):
     (root / "src/weather.rs").write_text((adapter / "weather.rs").read_text(encoding="utf-8"), encoding="utf-8")
     analog_path = root / "src/dsp/fm_analog.rs"
     analog = patch_fm_audio(analog_path.read_text(encoding="utf-8"), adapter)
+    analog = replace_once(analog, "    rds: RdsChannel,", "    capture: Option<MpxCapture>,\n    rds: RdsChannel,")
+    analog = replace_once(analog, "            rds: RdsChannel::new(stage1_rate),", "            capture: MpxCapture::armed(),\n            rds: RdsChannel::new(stage1_rate),")
+    analog = replace_once(analog, "        self.noise_blend.observe(mpx);", "        MpxCapture::observe(&mut self.capture, mpx);\n        self.noise_blend.observe(mpx);")
+    analog += "\n" + (adapter / "rds_capture.rs").read_text(encoding="utf-8")
     analog_path.write_text(analog + "\n" + (adapter / "nfm.rs").read_text(encoding="utf-8") + "\n" + (adapter / "am.rs").read_text(encoding="utf-8") + "\n" + (adapter / "audio_quality_tests.rs").read_text(encoding="utf-8"), encoding="utf-8")
     (root / "src/app.rs").write_text(app, encoding="utf-8")
     (root / "src/runtime.rs").write_text((adapter / "runtime.rs").read_text(encoding="utf-8"), encoding="utf-8")

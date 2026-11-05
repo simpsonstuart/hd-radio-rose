@@ -355,6 +355,54 @@ the ROSE; keep an established weather-alert source available during validation.
 Decoder source is included in the image's corresponding-source archive.
 
 
+### RDS capture and replay experiment
+
+The receiver can save four seconds of full FM multiplex directly after the discriminator
+(248,062.5 samples/s, about 3.8 MiB). To capture on the default receiver, run
+`touch /run/rose/rds-capture.arm` inside the container, then tune the desired FM
+station with **Automatic** or **Analog** fallback. Stay tuned for four seconds.
+The next FM demodulator consumes the marker and writes `/data/rds-capture.mpx`.
+If you retune early, arm it again. Move an existing clip before arming another
+capture. For additional receivers, use the corresponding `receivers/RECEIVER_ID/`
+subdirectories under both `/run/rose/` and `/data/`.
+
+Run the following inside the built image to inspect the clip:
+
+```sh
+rds-replay /data/rds-capture.mpx > /data/rds-blocks.csv
+```
+
+Each row identifies the pass, Manchester alignment, ending MPX sample, block
+position (A=0 through D=3), and 16-bit payload in hex. The first pass uses
+the pinned receiver's pilot, timing and block decoder. After a complete valid
+A/B/C/D group, the offline pass looks back up to eight preceding blocks on
+the same bit clock. It reports adjacent pairs with the expected checkwords.
+This tests **lost framing**. A damaged payload with a failing checkword stays
+unrecovered. Replayed blocks are for inspection only. The live station display
+continues to use the existing decoder and its text confirmation rules.
+
+The image build also runs `scripts/test-rds-replay.py` against the replay
+executable. Its 96-block fixtures include a clean transmission, four brief fades
+covering A blocks, the same fades with a weakened pilot, fades staggered across
+A/B/C/D positions, and a pilot-plus-noise control. The scorer checks each payload, position and transmission time, counts
+each true block once across both alignments, and reports false accepts separately.
+With seed 27 the clean clip yielded all 96 blocks on the first pass. On the RDS
+fade clip the first pass found 80 and replay added 10. With the pilot also
+weakened, replay added 9 to the first pass's 80. Staggering the fade positions
+changed the result to 86 first-pass blocks plus 6 recovered. Replay added zero false accepts
+on these fixtures. First-pass false accepts include individual acquisition
+candidates and do not imply a false station name reached the display. Off-air
+captures lack this fixture's ground truth and require independent confirmation.
+
+To reproduce locally with Python 3.11+ and Rust, use a checkout of the
+`STUDIO_REF` in the Dockerfile as `studio`:
+
+```sh
+python scripts/build-rds-replay.py studio/src/dsp/fm_analog.rs rds-replay.rs
+rustc --edition=2021 -O rds-replay.rs -o rds-replay
+python scripts/test-rds-replay.py ./rds-replay --seed 27 --save rds-clips
+```
+
 ### Analog audio quality (FM and NOAA)
 
 FM and NOAA use a band-limited fractional resampler with exact intermediate

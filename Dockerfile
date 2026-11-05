@@ -52,9 +52,12 @@ COPY scripts/test-constellation.c /build/test-constellation.c
 RUN cc -std=c11 -Wall -Wextra -Werror -I/src/nrsc5/include -I/src/nrsc5/src \
     -I/build/nrsc5/src -I/build/backend /build/test-constellation.c -lm -o /build/test-constellation \
     && /build/test-constellation
-COPY scripts/patch-studio.py /build/patch-studio.py
+COPY scripts/patch-studio.py scripts/build-rds-replay.py scripts/test-rds-replay.py /build/scripts/
 COPY backend/ /build/backend/
-RUN python3 /build/patch-studio.py /src/studio /build/backend
+RUN python3 /build/scripts/build-rds-replay.py /src/studio/src/dsp/fm_analog.rs /build/rds-replay.rs \
+    && rustc +1.95.0 --edition=2021 -O /build/rds-replay.rs -o /build/rds-replay \
+    && python3 /build/scripts/test-rds-replay.py /build/rds-replay
+RUN python3 /build/scripts/patch-studio.py /src/studio /build/backend
 WORKDIR /src/studio
 # Explicit toolchain bypasses upstream's floating rust-toolchain.toml.
 # Avoid -C target-cpu=native: CI's ARM CPU need not match the ROSE CPU.
@@ -93,6 +96,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rtl-sdr hackrf usbutils libfftw3-single3 libopus0 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/studio/target/release/nrsc5-studio /opt/nrsc5-studio/nrsc5-studio
+COPY --from=build /build/rds-replay /usr/local/bin/rds-replay
 COPY --from=build /build/multimon/multimon-ng /usr/local/bin/multimon-ng
 COPY --from=build /src/studio/bin/libnrsc5.so /usr/lib/nrsc5-studio/libnrsc5.so
 COPY --from=build /src/studio/res/map.png /usr/share/nrsc5-studio/map.png
