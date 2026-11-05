@@ -1,24 +1,15 @@
 // Direct PCM transport: one local encoder, bounded queue, 20 ms audio clock.
-mod whistle;
 mod weather_speech;
 static STATION: AtomicU32 = AtomicU32::new(0);
 const SPEECH_BIT: u32 = 1 << 31;
-static WHISTLE_STATUS: AtomicU64 = AtomicU64::new(0);
 
 pub fn set_listening_station(key: u32, weather_speech: bool) {
     let mode = if key != 0 && weather_speech { SPEECH_BIT } else { 0 };
     STATION.store(key | mode, Ordering::Relaxed);
 }
 
-pub fn whistle_hz(key: u32) -> Option<u32> {
-    let status = WHISTLE_STATUS.load(Ordering::Relaxed);
-    let hz = status as u32;
-    (key != 0 && status >> 32 == key as u64 && hz != 0).then_some(hz)
-}
-
 struct ListeningFilters {
     station: u32,
-    whistle: Option<whistle::Detector>,
     speech: Option<weather_speech::WeatherSpeech>,
 }
 
@@ -26,13 +17,8 @@ impl ListeningFilters {
     fn process(&mut self, mode: u32, bytes: &mut [u8]) {
         let station = mode & !SPEECH_BIT;
         if station != self.station {
-            if let Some(filter) = self.whistle.as_mut() { filter.reset(); }
             self.speech = None;
             self.station = station;
-        }
-        if let Some(filter) = self.whistle.as_mut() {
-            if station != 0 { filter.process(bytes); }
-            WHISTLE_STATUS.store((station as u64) << 32 | filter.frequency() as u64, Ordering::Relaxed);
         }
         if mode & SPEECH_BIT != 0 {
             self.speech.get_or_insert_with(weather_speech::WeatherSpeech::new).process(bytes);
@@ -110,23 +96,22 @@ mod playback_buffer_tests {
     }
 
     #[test]
-    fn live_speech_switch_preserves_whistle_lock_and_resets_on_retune() {
-        let mut filters = ListeningFilters { station: 0, speech: None, whistle: Some(whistle::Detector::new()) };
+    fn steady_tone_passes_through_and_weather_speech_resets_on_retune() {
+        let mut filters = ListeningFilters { station: 0, speech: None };
         let mut tone = Vec::new();
         for i in 0..44100*4 {
             let x = (8000.0 * (i as f32 * std::f32::consts::TAU * 1712.0 / 44100.0).sin()) as i16;
             tone.extend_from_slice(&x.to_le_bytes().repeat(2));
         }
+        let original = tone.clone();
         for block in tone.chunks_exact_mut(3528) { filters.process(1, block); }
-        let hz = whistle_hz(1).expect("station tone acquired");
+        assert_eq!(tone, original);
         assert!(filters.speech.is_none());
         filters.process(1 | SPEECH_BIT, &mut tone[..3528]);
         assert!(filters.speech.is_some());
-        assert_eq!(whistle_hz(1), Some(hz));
         let mut silence = [0; 3528];
         filters.process(2 | SPEECH_BIT, &mut silence);
         assert_eq!(silence, [0; 3528], "new station must not replay the previous frame");
-        assert_eq!(whistle_hz(2), None);
         let mut bypass = [42; 3528];
         filters.process(2, &mut bypass);
         assert!(filters.speech.is_none());
@@ -155,8 +140,6 @@ fn open_stream(
             let mut deadline = Instant::now();
             let mut playback = PlaybackBuffer::default();
             let mut filters = ListeningFilters {
-                whistle: if std::env::var("ROSE_AUDIO_WHISTLE").unwrap_or_default()
-                    .trim().eq_ignore_ascii_case("off") { None } else { Some(whistle::Detector::new()) },
                 station: 0, speech: None,
             };
             loop {
@@ -168,7 +151,7 @@ fn open_stream(
                 };
                 let mode = STATION.load(Ordering::Relaxed);
                 filters.process(mode, &mut bytes);
-                // Receiver gain/mute apply after both filters, including delayed speech.
+                // Receiver gain/mute apply after speech cleanup, including delayed speech.
                 if scale != 1.0 {
                     for pair in bytes.chunks_exact_mut(2) {
                         let value = i16::from_le_bytes([pair[0], pair[1]]);
@@ -181,7 +164,6 @@ fn open_stream(
                 if deadline > now { std::thread::sleep(deadline - now); }
                 else if now.duration_since(deadline) > Duration::from_millis(100) { deadline = now; }
             }
-            WHISTLE_STATUS.store(0, Ordering::Relaxed);
         }
     });
     (Some(()), None)

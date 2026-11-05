@@ -32,19 +32,9 @@ configuration explicitly sets `off`, change it to `hiss` to enable cleanup. The 
 applies to every SDR listening stream. Recordings and SAME decoding use the
 audio upstream of this filter.
 
-Automatic whistle reduction also runs on the shared SDR listening stream.
-Each receiver measures its tuned station five times per second and watches
-for a narrow peak between roughly 600 Hz and 5.2 kHz. After repeated
-detections it applies one narrow cut, displays the center frequency on
-the **Listen** page, and releases the cut when the peak disappears. Retuning
-or switching HD programs starts a fresh measurement. A sustained musical note
-can also trigger the filter. To bypass whistle reduction independently of
-the hiss filter, set `ROSE_AUDIO_WHISTLE=off` and recreate the container.
-
 For NOAA weather radio, open **Listen** and toggle **AI speech cleanup (all listeners)**
-while playing a station. This receiver setting starts off and is saved across restarts.
-The listening stream runs automatic whistle reduction first, then local RNNoise
-speech cleanup. For 450 ms after stronger speech, the mix brings back some of the
+while playing a station. Cleanup is enabled by default. The receiver saves your choice across restarts.
+When enabled, local RNNoise processes the weather station audio. For 450 ms after stronger speech, the mix brings back some of the
 speech-band audio to preserve quiet phrase endings. The hiss filter runs in the
 encoder. Allow for the browser’s audio buffer when comparing the switch positions.
 SAME alert decoding uses the separate audio feed upstream of listening cleanup.

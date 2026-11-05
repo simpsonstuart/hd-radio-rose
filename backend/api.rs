@@ -34,7 +34,7 @@ impl Nrsc5App {
                 self.gmrs_band = saved["band"] == "gmrs";
                 self.gmrs_channel = crate::weather::gmrs_channel(&saved["gmrs_channel"]).unwrap_or(1);
                 self.wx_band = saved["band"] == "noaa";
-                self.wx_speech = saved["weather_speech"].as_bool().unwrap_or(false);
+                self.wx_speech = saved["weather_speech"].as_bool().unwrap_or(self.wx_speech);
                 self.am_band = saved["band"] == "am";
                 self.am_converter = saved["am_converter"].as_bool().unwrap_or(true);
                 self.am_direct_sampling = saved["am_direct_sampling"].as_i64().filter(|v| (0..=2).contains(v)).unwrap_or(0) as i32;
@@ -208,7 +208,6 @@ impl Nrsc5App {
         self.weather_state(&mut state);
         self.am_state(&mut state);
         state["source_managed"] = json!(std::env::var_os("ROSE_SDR_BINDING").is_some());
-        state["whistle_hz"] = json!(crate::audio::whistle_hz(self.listening_station_key()));
         state
     }
 }

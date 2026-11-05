@@ -79,7 +79,7 @@ def patch(root, adapter=None):
     spectrum_path.write_text(spectrum, encoding="utf-8")
     app = (root / "src/app.rs").read_text(encoding="utf-8")
     app = replace_once(app, "pub struct Nrsc5App {", "pub struct Nrsc5App {\n    dmr_band: bool,\n    dmr_hz: u32,\n    dmr_slot: i32,\n    gmrs_band: bool,\n    gmrs_channel: usize,\n    wx_band: bool,\n    wx_speech: bool,\n    am_band: bool,\n    am_frequency: f64,\n    fm_frequency: f32,\n    am_converter: bool,\n    am_direct_sampling: i32,\n    wx_frequency: f64,\n    wx_session: Option<crate::weather::WeatherReceiver>,")
-    app = replace_once(app, "        let mut app = Self {", "        let mut app = Self {\n            am_band: false, am_frequency: 1.0, fm_frequency: 101.1, am_converter: true, am_direct_sampling: 0, dmr_band: false, dmr_hz: 446_000_000, dmr_slot: 1, gmrs_band: false, gmrs_channel: 1, wx_band: false, wx_speech: false, wx_frequency: 162.400, wx_session: None,")
+    app = replace_once(app, "        let mut app = Self {", "        let mut app = Self {\n            am_band: false, am_frequency: 1.0, fm_frequency: 101.1, am_converter: true, am_direct_sampling: 0, dmr_band: false, dmr_hz: 446_000_000, dmr_slot: 1, gmrs_band: false, gmrs_channel: 1, wx_band: false, wx_speech: true, wx_frequency: 162.400, wx_session: None,")
     app = replace_once(app, "pub fn new(cc: &eframe::CreationContext<'_>) -> Self {",
                        "pub fn new(ctx: &egui::Context) -> Self {")
     app = app.replace("&cc.egui_ctx", "ctx")
@@ -152,8 +152,7 @@ def patch(root, adapter=None):
     end = audio.index("// ---------------------------------------------------------------------------", begin)
     audio = audio[:begin] + (adapter / "pcm.rs").read_text() + "\n\n" + audio[end:]
     audio_path.write_text(audio, encoding="utf-8")
-    for module in ("whistle.rs", "weather_speech.rs"):
-        (audio_path.parent / module).write_bytes((adapter / module).read_bytes())
+    (audio_path.parent / "weather_speech.rs").write_bytes((adapter / "weather_speech.rs").read_bytes())
     dock_path = root / "src/gui/dock.rs"
     dock = dock_path.read_text(encoding="utf-8")
     dock = replace_once(dock, "#[derive(Debug, Clone)]\npub enum UiCommand {",
