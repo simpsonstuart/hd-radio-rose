@@ -48,7 +48,9 @@ RUN git init studio && cd studio \
     && test "$(git rev-parse HEAD)" = "$STUDIO_REF"
 # Use patched versions and omit desktop accessibility backends in the headless build.
 COPY scripts/studio-dependencies.patch /build/scripts/studio-dependencies.patch
-RUN git -C studio apply /build/scripts/studio-dependencies.patch
+# Upstream commits Cargo.toml with CRLF. Normalize it to match the patch's LF context.
+RUN sed -i 's/\r$//' studio/Cargo.toml \
+    && git -C studio apply /build/scripts/studio-dependencies.patch
 RUN git init rnnoise && cd rnnoise \
     && git remote add origin https://github.com/xiph/rnnoise.git \
     && git fetch --depth 1 origin "$RNNOISE_REF" && git checkout --detach FETCH_HEAD \
