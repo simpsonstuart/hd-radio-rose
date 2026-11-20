@@ -290,7 +290,9 @@ No physical SDR or ROSE was available for end-to-end tests.
 
 Studio 0.6.5 is pinned to `61064d27fcb4e7a7a231b9f6aa546e59bee00084`; nrsc5 v3.2.0
 to `a5c09723b135327aeef157770caae9aebf597547`. Rust is 1.95.0; Vue/Vite dependencies
-are locked in `web/package-lock.json`. Base image tags and Debian packages may move.
+are locked in `web/package-lock.json`. The container applies
+`scripts/studio-dependencies.patch` to the pinned Studio manifest and lockfile.
+CI refreshes the base images and installs available Debian runtime updates on each build.
 
 `scripts/patch-studio.py` builds a headless entry point, extracts Studio's non-drawing
 tick, exposes commands/snapshots, and replaces audio playback with direct PCM.
@@ -299,7 +301,8 @@ inert context receives repaint notifications, but **no UI frame is rendered**.
 This conservative adapter keeps map/art/recording behavior intact while allowing
 the frontend to evolve separately. Upstream changes require reviewing exact
 patch anchors and rerunning CI. Decoder libraries use system FFTW/USB/RTL-SDR
-instead of upstream's x86-specific bundled build, plus HDC-patched FAAD2.
+instead of upstream's x86-specific bundled build, plus FAAD2 2.11.3 with the
+nrsc5 HDC patch.
 
 Integration code is MIT. Studio source is MIT, but its libnrsc5-linked binary is
 GPL-3.0; the image includes upstream notices, licenses, patched source, vendored

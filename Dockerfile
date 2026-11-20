@@ -46,6 +46,9 @@ RUN git init studio && cd studio \
     && git remote add origin https://github.com/LTCAshraven/nrsc5-studio.git \
     && git fetch --depth 1 origin "$STUDIO_REF" && git checkout --detach FETCH_HEAD \
     && test "$(git rev-parse HEAD)" = "$STUDIO_REF"
+# Use patched versions and omit desktop accessibility backends in the headless build.
+COPY scripts/studio-dependencies.patch /build/scripts/studio-dependencies.patch
+RUN git -C studio apply /build/scripts/studio-dependencies.patch
 RUN git init rnnoise && cd rnnoise \
     && git remote add origin https://github.com/xiph/rnnoise.git \
     && git fetch --depth 1 origin "$RNNOISE_REF" && git checkout --detach FETCH_HEAD \
@@ -82,8 +85,8 @@ WORKDIR /src/studio
 ENV LIBRARY_PATH=/usr/local/lib
 # Explicit toolchain bypasses upstream's floating rust-toolchain.toml.
 # Avoid -C target-cpu=native: CI's ARM CPU need not match the ROSE CPU.
-RUN cargo +1.95.0 build --locked --release --bin nrsc5-studio --features eframe/glow
-RUN LD_LIBRARY_PATH=/src/studio/bin cargo +1.95.0 test --locked --release --bin nrsc5-studio --features eframe/glow
+RUN cargo +1.95.0 build --locked --release --bin nrsc5-studio
+RUN LD_LIBRARY_PATH=/src/studio/bin cargo +1.95.0 test --locked --release --bin nrsc5-studio
 # Retain corresponding source, patched FAAD2, Cargo.lock and Rust dependencies.
 RUN mkdir -p /sources/studio/.cargo /sources/nrsc5 /sources/faad2 \
     && cargo +1.95.0 vendor --locked /sources/studio/vendor > /sources/studio/.cargo/config.toml \
@@ -112,7 +115,7 @@ COPY --from=build /sources/ /
 
 FROM debian:bookworm-slim AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates python3 nginx-light openssl \
     ffmpeg hdhomerun-config libasound2 libdbus-1-3 \
     libxkbcommon0 libwayland-client0 libx11-6 libx11-xcb1 libxcb1 \

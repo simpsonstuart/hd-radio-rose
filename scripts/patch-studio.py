@@ -6,7 +6,6 @@ fail on upstream changes instead of silently dropping receiver functionality.
 from pathlib import Path
 import re
 import sys
-import tomllib
 
 
 def replace_once(text, before, after):
@@ -163,16 +162,35 @@ def patch(root, adapter=None):
     info = re.sub(r"#\[derive\(([^\n]+)\)\]", r"#[derive(\1, serde::Serialize)]", info)
     info = re.sub(r"(    pub \w+: (?:Option<)?Instant>?[,]?)", r"    #[serde(skip)]\n\1", info)
     info_path.write_text(info, encoding="utf-8")
-    lock_path = root / "Cargo.lock"
-    lock = lock_path.read_text()
-    version = next(p["version"] for p in tomllib.loads(lock)["package"] if p["name"] == "serde_json")
-    cargo = (root / "Cargo.toml").read_text()
-    cargo = replace_once(cargo, "[dependencies]", f'[dependencies]\nserde_json = "={version}"')
-    (root / "Cargo.toml").write_text(cargo)
-    begin = lock.index('name = "nrsc5-studio"')
-    end = lock.index("\n[[package]]", begin)
-    block = replace_once(lock[begin:end], ' "serde",', ' "serde",\n "serde_json",')
-    lock_path.write_text(lock[:begin] + block + lock[end:])
+    play_log_path = root / "src/play_log.rs"
+    play_log = replace_once(play_log_path.read_text(encoding="utf-8"),
+                            "fn csv_field(s: &str) -> String {\n", r"""#[cfg(test)]
+#[test]
+fn csv_export_keeps_broadcast_metadata_as_text() {
+    assert_eq!(csv_field("Regular title"), "Regular title");
+    assert_eq!(csv_field("Title, with \"quotes\""), "\"Title, with \"\"quotes\"\"\"");
+    for prefix in ['=', '+', '-', '@', '＝', '＋', '－', '＠', '\t'] {
+        let value = format!("{prefix}Text");
+        assert_eq!(csv_field(&value), format!("'{value}"));
+    }
+    assert_eq!(csv_field("  +Title"), "'  +Title");
+    assert_eq!(csv_field("\nTitle"), "\"'\nTitle\"");
+}
+
+fn csv_field(s: &str) -> String {
+    // Keep broadcast metadata from being interpreted as a spreadsheet formula.
+    let escaped;
+    let first = s.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    let s = if first.starts_with(['=', '+', '-', '@', '＝', '＋', '－', '＠'])
+        || s.starts_with(['\t', '\r', '\n'])
+    {
+        escaped = format!("'{s}");
+        escaped.as_str()
+    } else {
+        s
+    };
+""")
+    play_log_path.write_text(play_log, encoding="utf-8")
     (root / "src/main.rs").write_text((adapter / "main.rs").read_text(), encoding="utf-8")
     soapy_path = root / "src/sdr/soapy.rs"
     soapy = soapy_path.read_text(encoding="utf-8")
